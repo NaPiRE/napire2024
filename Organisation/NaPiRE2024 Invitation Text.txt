@@ -1,0 +1,30 @@
+Dear [Name],
+
+I would like to invite you to participate in our Requirements Engineering (RE) survey.
+
+This survey constitutes the 4th replication of our international initiative to explore trends in industrial practices and problems in RE. The survey forms thereby part of the large-scale Naming the Pain in Requirements Engineering (NaPiRE) initiative (http://napire.org), started in 2012, and it is conducted by an internationally distributed alliance of software engineering researchers with the goals to 
+
+(1) help the research community getting a better understanding of general industrial trends in Requirements Engineering (RE) and problems faced therein and, thus, strengthen the practical relevance of research outcomes.
+(2) help practitioners assessing their current RE situation in context of overall trends.
+
+A particular focus of this year's international survey is to explore the role of communication as many of the top-rated RE problems in the past can be traced back to human errors.
+
+We would like to cordially invite you to participate in this survey, and researchers to further distribute the invitation.
+
+Most important facts in a nutshell:
+* This survey is conducted worldwide.
+* We pose a set of questions structured according to the categories:
+   -- General information about the respondent and her project context,
+   -- Status Quo on requirements elicitation, documentation, validation, and management practices
+   -- Current problems experienced in RE and how these problems manifest themselves in the process
+* The survey is anonymous, because we are especially interested in personal experiences and critical opinions.
+* The focus of the questions is on experienced made in individual projetc environments. Redistribution of the survey invitation within organisations is therefore possible and highly appreciated.
+* The overall initiative is run by the community for the community and, thus, all strictly anonymised data will be curated and made publicly available after the data analysis.
+
+The link to the survey is https://ww2.unipark.de/uc/NaPiRE-HumanFactors/
+
+We would highly appreciate your consideration and support!
+
+Thanks and best regards,
+The NaPiRE Team
+
