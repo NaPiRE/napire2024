@@ -16,13 +16,9 @@ This work is licensed under the CC-BY 4.0. Please refer to the respective licenc
 
 ## NaPiRE data set
 
-The NaPiRE initiative (Naming the Pain in Requirements Engineering) is a community endeavour run by a multitude of researchers world-wide. When referring to the NaPiRE initiative, please always refer to the official initiative's website under [http://napire.org](http://napire.org). When referring to the data set, please respect the authors' attribution as described in the respective folders; These authors can be referred to as via "Daniel Mendez, Stefan Wagner, Marcos Kalinowski, Teresa Baldassarre et al."
+The NaPiRE initiative (Naming the Pain in Requirements Engineering) is a community endeavour run by a multitude of researchers world-wide. When referring to the NaPiRE initiative, please always refer to the official initiative's website under [http://napire.org](http://napire.org). When citing the NaPiRE initiative in general, please use: "D. Mendez, S. Wagner, M. Kalinowski, M.T. Baldassarre et al.. NaPiRE: Naming the Pain in Requirements Engineering, http://napire.org". 
 
-When citing the NaPiRE initiative, please therefore use:
-
-D. Mendez, S. Wagner, M. Kalinowski, M.T. Baldassarre et al.. NaPiRE: Naming the Pain in Requirements Engineering, http://napire.org.
-
-Specific data sets can be cited by adding the dates from the respective NaPiRE runs to the citation (e.g. 2024 for the one primarily used in context of this repository).
+Specific data sets can be cited by adding the dates from the respective NaPiRE runs to the citation (e.g. 2024 for the one primarily used in context of this repository). When referring to the data set in this repository (NaPiRE 2024), please respect all authors' attribution as described in the respective file.
 
 Exemplary publications that describe the initiative and which can be also used to refer to the data set are:
 
