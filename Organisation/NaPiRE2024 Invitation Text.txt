@@ -1,6 +1,6 @@
 Dear [Name],
 
-I would like to invite you to participate in our Requirements Engineering (RE) survey.
+I would like to invite you to participate in our latest Requirements Engineering (RE) survey.
 
 This survey constitutes the 4th replication of our international initiative to explore trends in industrial practices and problems in RE. The survey forms thereby part of the large-scale Naming the Pain in Requirements Engineering (NaPiRE) initiative (http://napire.org), started in 2012, and it is conducted by an internationally distributed alliance of software engineering researchers with the goals to 
 
