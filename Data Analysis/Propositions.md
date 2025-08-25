@@ -36,5 +36,5 @@ P 23: To align tests with requirements, acceptance criteria are defined for requ
 ~~P 27b: The application of requirements engineering standards is checked by constructive quality assurance (e.g. via checklists or templates).~~  
 ~~P 28: The RE standard is tailored at the beginning of a project by the project lead based on experiences.~~  
 
-
+P 29: Teams with a good or very good relationship with their customers, ask these customers what assumptions to make.
 
