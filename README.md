@@ -2,19 +2,17 @@
   <img src="http://napire.org/assets/napire-Logo.jpg" alt="NaPiRe Logo">
 </p>
 
-# napire2024
+# Naming the Pain in Requirements Engineering: 2024 Edition
 
 Project repository for the 2024 Edition of the NaPiRE Survey
 
-# Contributing and extending
+## Licensing
 
-## Licencing
+This work is licensed under the CC-BY 4.0. Please refer to the respective license information for more details.
 
-This work is licensed under the CC-BY 4.0. Please refer to the respective licence information for more details.
+## Citing
 
-# Citing
-
-## NaPiRE data set
+### NaPiRE data set
 
 The NaPiRE initiative (Naming the Pain in Requirements Engineering) is a community endeavour run by a multitude of researchers world-wide. When referring to the NaPiRE initiative, please always refer to the official initiative's website under [http://napire.org](http://napire.org). When citing the NaPiRE initiative in general, please use: "D. Mendez, S. Wagner, M. Kalinowski, M.T. Baldassarre et al.. NaPiRE: Naming the Pain in Requirements Engineering, http://napire.org". 
 
