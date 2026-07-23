@@ -38,6 +38,9 @@ This repository contains the following files:
 └── LICENSE.md : license file clarifying reuse of this material
 ```
 
+> [!important]
+> For the longitudinal analysis involving the data from this run, refer to https://github.com/NaPiRE/napire-longitudinal.
+
 ## System Requirements
 
 To interact with the data analyses in this repository, you have two options:
