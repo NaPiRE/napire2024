@@ -19,6 +19,7 @@ This repository contains the following files:
 │   └── quick-overview.zip: simple visualization of the collected data
 ├── figures: directory for all generated figures
 │   ├── descriptive: directory of all descriptive statistics
+│   ├── propositions: directory of propositions collected during the ISERN'25 workshop
 │   └── variance: figures used to illustrate the analysis of variance
 ├── organisation: supplementary files for the coordination of the study
 │   ├── NaPiRE Flyer: promotional material for participating in NaPiRE
@@ -29,6 +30,7 @@ This repository contains the following files:
 ├── src: source code used in this study
 │   ├── html: directory with all precompiled source files
 │   ├── patterns: reusable data analysis patterns
+│   ├── propositions: directory with all formalized propositions
 │   ├── util: auxiliary R scripts and supporting files
 │   │   ├── dropout.Rmd: notebook visualizing the dropout patterns from the survey
 │   │   └── data-loader.R: script to load, cast, and prepare the raw data for the analysis
