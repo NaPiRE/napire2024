@@ -1,0 +1,245 @@
+---
+title: 'Analysis Pattern: Binary Response'
+author: "Julian Frattini"
+date: "2025-08-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse) # dialect for R with enhanced data processing and visualization capabilities
+library(brms) # Bayesian modeling functions
+
+library(patchwork) # figure compositions
+```
+
+This notebook contains the pattern for the quantitative analysis of a binary response variable.
+
+```{r configuration}
+# verbatim title of the question
+title = "We elicit and/or refine requirements in several iterations."
+# shortened identifier of the question/variable
+varname = "elicit.iterative"
+
+varname.18 = "v_28"
+varname.24 = "v_28"
+```
+
+
+## Data Preparation
+
+First, we load the data from both runs (NaPiRE2018 as `d18` and NaPiRE2024 as `d24`).
+Empty data points (which the survey tool exports as -66 and -77) are translated into proper `na` values.
+
+```{r load-data}
+na.values <- c("-66", "-77")
+
+d18 <- read.csv("../../data/runs/napire2018/data_raw.csv", 
+                header=TRUE, skip=1, sep=";", na.strings=na.values)
+d24 <- read.csv("../../data/runs/napire2024/data_raw.csv", 
+                header=TRUE, skip=0, sep=";", na.strings=na.values)
+```
+
+Next, we extract only the relevant variables (i.e., the identifier `lfdn` of each response as well as the value of the variable) and convert it into a common type.
+
+```{r variable-selection}
+d18c <- d18 %>% 
+  select(lfdn, {{varname.18}}) %>% 
+  drop_na() %>% 
+  rename(variable = {{varname.18}}) %>% 
+  mutate(
+    run = "n18", # documentation of the NaPiRE run
+    variable = (variable == 1) # casting the variable to a Boolean factor
+  ) 
+
+d24c <- d24 %>%
+  select(lfdn, {{varname.24}}) %>%
+  drop_na() %>%
+  rename(variable = {{varname.24}}) %>% 
+  mutate(
+    run = "n24",
+    variable = (variable=="quoted")
+  )
+```
+
+Finally, we join the data sets into one combined dataset `dc`.
+
+```{r join-data}
+dc <- bind_rows(d18c, d24c) %>% 
+  mutate(
+    run = factor(run, levels = c("n18", "n24"), ordered=TRUE)
+  )
+```
+
+### Data Visualization
+
+To gauge the data, we can plot the distribution of the variable across the surveyed NaPiRE runs.
+
+```{r visualize-distribution}
+dc %>% group_by(run, variable) %>% 
+  summarize(n = n()) %>% 
+  mutate(freq = n/sum(n)) %>% 
+  ggplot(aes(fill = factor(variable), x = freq, y = run)) +
+    geom_bar(position = "stack", stat = "identity") +
+    labs(x = "Frequency", y = "NaPiRE Runs", fill = title) +
+    scale_y_discrete(labels=c("2018", "2024")) +
+    scale_x_continuous(labels = scales::label_percent()) +
+    theme_bw() + 
+    theme(legend.position = "bottom")
+```
+
+## Analyses
+
+We perform two separate analyses with the data.
+First, we use the results of the previous NaPiRE run (`n18`) as priors for a regression analysis on the current NaPiRE run (`n24`).
+If the regression model on the data from the current analysis fits better than with uninformative priors, the base proposition can be considered confirmed.
+If not, then we perform a second analysis in which we assess the effect that the time difference had on the response distribution.
+
+### Proposition Confirmation
+
+Postulating that the answer to the survey question follows a Binomial distribution with a shared parameter, we can specify the regression formula 
+
+$$variable \sim Binom(1, p)$$
+
+```{r distributional-formula}
+f.dist <- bf(variable | trials(1) ~ 1)
+```
+
+```{r distributional-regression-18}
+d18c.num <- d18c %>% mutate(variable = as.numeric(variable))
+
+m.dist.18 <-
+  brm(data = d18c.num, family = binomial, f.dist, 
+      prior = c(prior(normal(0, 1), class=Intercept)),
+    iter = 4000, warmup = 1000, chains = 4, cores = 4,
+    seed = 4,
+    file = paste("../fits/dist.", varname, ".18", sep="")
+  )
+
+summary(m.dist.18)
+```
+
+The parameters of the posterior coefficient of the variable then need to be plugged into the priors of the model trained on the 2024 data.
+
+```{r posterior-distribution-extraction}
+m.18.dist.coefs <- data.frame(fixef(m.dist.18))
+posterior.mean <- as.numeric(m.18.dist.coefs$Estimate)
+posterior.var <- as.numeric(m.18.dist.coefs$Est.Error)
+
+stanvars <- stanvar(posterior.mean, name='postmu') + stanvar(posterior.var, name='postsd')
+```
+
+With these parameters, we train a second regression model with informed priors.
+
+```{r distributional-regression-24-informed}
+d24c.num <- d24c %>% mutate(variable = as.numeric(variable))
+
+m.dist.24.informed <-
+  brm(data = d24c.num, family = binomial, f.dist, 
+      prior = c(prior(normal(postmu, postsd), class=Intercept)),
+      iter = 4000, warmup = 1000, chains = 4, cores = 4,
+      seed = 4, stanvars = stanvars,
+      file = paste("../fits/dist.", varname, ".24.informed", sep="")
+  )
+```
+
+To compare whether the results from the 2018 run serve as a useful prior to the analysis of the 2024 data, we also train a model with uninformative priors ($\mathcal{N}(0, 1)$) on the 2024 data. 
+
+```{r distributional-regression-24-uninformed}
+m.dist.24.uninformed <-
+  brm(data = d24c.num, family = binomial, f.dist, 
+      prior = c(prior(normal(0, 1), class=Intercept)),
+      iter = 4000, warmup = 1000, chains = 4, cores = 4,
+      seed = 4,
+      file = paste("../fits/dist.", varname, ".24.uninformed", sep="")
+  )
+```
+
+A visual comparison of the two models (one with informed and one with uninformed priors) serves as a first indicator of the impact of the information on the model training.
+
+```{r posterior-prediction}
+post.dist.24.uninformed <-  brms::pp_check(m.dist.24.uninformed, type="bars", ndraws = 100)
+post.dist.24.informed <-  brms::pp_check(m.dist.24.informed, type="bars", ndraws = 100)
+
+post.dist.24.uninformed | post.dist.24.informed
+```
+
+A more thorough comparison is the use of the leave-one-out (loo) criterion, which estimates the predictive power of the two models.
+
+```{r distributional-loo-compare}
+m.dist.24.uninformed <- add_criterion(m.dist.24.uninformed, criterion = "loo")
+m.dist.24.informed <- add_criterion(m.dist.24.informed, criterion = "loo")
+
+loo_compare(m.dist.24.uninformed, m.dist.24.informed)
+```
+
+Whichever model has the highest `elpd-diff` value can be considered of superior predictive power.
+
+### Impact of Time
+
+If the model with uninformed priors has the highest predictive power, this indicates that the elapsed time had an impact on the distribution.
+In a second regression analysis, we can quantify this impact of time on the response distribution.
+
+In a regression model, we can use the `run` as a regressor to quantify its impact on the response variable.
+We treat the elapsed time categorically (i.e., 2018 and 2024 as two points in time on an ordinal scale) rather than continuously as we do only infer about the impact of time elapsing at all, not the precise number of years.
+
+```{r time-formula}
+f.time <- bf(variable | trials(1) ~ run)
+```
+
+We sample from the priors only to perform a prior predictive check and assess the validity of the chosen prior probability distribution.
+
+```{r time-prior}
+dc.num <- dc %>% mutate(variable = as.numeric(variable))
+
+m.time.prior <-
+  brm(data = dc.num, family = binomial, f.time, prior = c(
+      prior(normal(0, 1), class=Intercept),
+      prior(normal(0, 1), class=b)
+    ), iter = 4000, warmup = 1000, chains = 4, cores = 4,
+    seed = 4, sample_prior="only",
+    file = paste("../fits/time.", varname, ".prior", sep="")
+  )
+
+brms::pp_check(m.time.prior, type="bars", ndraws = 100)
+```
+
+Given the eligibility of the priors, we train the model on data and update the variable coefficients.
+Additionally, we conduct a posterior predictive check to confirm that the model adequately trained.
+
+```{r time-model}
+m.time <-
+  brm(data = dc.num, family = binomial, f.time, prior = c(
+      prior(normal(0, 1), class=Intercept),
+      prior(normal(0, 1), class=b)
+    ),
+    iter = 4000, warmup = 1000, chains = 4, cores = 4,
+    seed = 4, 
+    file = paste("../fits/time.", varname, ".posterior", sep="")
+  )
+
+brms::pp_check(m.time, type="bars", ndraws = 100)
+```
+
+The posterior distribution of the variable coefficients quantifies the effect of the elapsed time on the response variable.
+
+```{r time-coefficients}
+summary(m.time)
+```
+
+This effect can also be visualized in a marginal plot.
+
+```{r time-marginal-runs}
+m_eff <- conditional_effects(m.time, effects="run")
+plot(m_eff, plot = FALSE)[[1]] +
+  labs(title = title, x = "NaPiRE Runs", y = "Positive response") +
+  scale_y_continuous(
+    labels = scales::label_percent(), 
+    limits = c(0, 1)) + # add the "limits" option to scale the y axis of the plot from 0-100%, remove for zoom
+  theme_bw()
+
+ggsave(filename = paste("../../figures/marginal-time-", varname, ".pdf", sep=""), 
+       device = "pdf", width = 5, height = 8)
+```
+

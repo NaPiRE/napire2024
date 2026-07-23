@@ -1,0 +1,186 @@
+---
+title: 'Hypothesis Hx (Py):'
+author: "Julian Frattini"
+date: "2025-12-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse) # R dialect for simpler data wrangling
+library(patchwork) # arranging and assembling figures
+library(ggdag) # visualizing directed acyclic graphs
+
+library(brms) # training of Bayesian regression models
+library(marginaleffects) # evaluation of Bayesian regression models
+
+source("../util/data-loader.R") # preparation of the raw data
+```
+
+This document investigates hypothesis $H_X^{PY}$ (originating from proposition Y):
+
+> *CAUSE* impacts that *EFFECT*.
+
+The two variables are concepts operationalized by the following self-reported variables:
+
+> *Q1* impacts the *Q2*
+
+For analysis, we follow the 3-step framework for statistical causal inference as summarized by Siebert.[^1]
+
+## Modeling
+
+The causal relationships were formalized in the following directed, acyclic graph (see proposition Y for the full DAG):
+
+```{r specify-dag}
+dag <- dagify(
+  
+)
+
+ ggdag_status(dag, use_labels = "label", text = FALSE) +
+   theme_dag() +
+   theme(legend.position = "bottom") +
+   labs(fill = "Variable type", color = "Variable type")
+```
+
+## Identification
+
+Based on the backdoor criterion, we can identify variables to statistically control
+
+```{r identify-adjustment-set}
+ggdag_adjustment_set(dag, exposure = "frequency", outcome = "changes")
+```
+
+We must adjust for the variable `team.size` to de-confound the effect of `frequency` on `changes`.
+The resulting set of relevant variables consists of the following:
+
+| Code | Group | Description | Variable |
+|---|---|---|---|
+| `frequency` | Communication | How often do members of your team meet, informally by chance meeting or in announced meetings? | `v_380` |
+| `changes` | Problems | How much do you agree or disagree with the following statements about your project: Changes in requirements are not communicated | `v_410` |
+| `team-size` | Demographics | How many people are involved in your project? | `v_3` |
+
+## Estimation
+
+In the third step, we quantify the strength of the assumed causal effect.
+We employ a Bayesian data analysis approach following the guidelines of McElreath[^2] and Gelman et al.[^3]
+
+### Data Preparation
+
+We load the data from the 2024 run of the NaPiRE survey.
+The variables relevant to this hypothesis are LIST.
+We use the file *data_cleaned_2024.csv*, not the original *data_raw_2024.csv*, because `v_3` is a numeric variable but the original, raw file allowed strings (e.g., "12 people" instead of $12$) in this field.
+In the process, we make the following changes:
+
+- Dropping incomplete data: removing all observations containing `NA` values
+
+All manual cleaning operations performed on the data are documented in the data cleaning protocol (to be found in data/runs/napire2024/data-cleaning-protocol.md).
+
+```{r load-data}
+d <- load_data(run = "2024", file = "../../data/runs/napire2024/data_cleaned_2024.csv") %>% 
+  select(v_3, v_380, v_410) %>%  
+  drop_na() %>% 
+  mutate(v_3l = log(v_3, base = 10)) %>% 
+  filter(v_380 != "I don't know")
+
+str(d)
+```
+
+Before starting with the analysis, we can visualize the distribution of the data.
+Ordinal variables are visualized as stacked bars.
+
+```{r visualize-data}
+
+```
+
+### Formula
+
+Next, we specify a regression formula based on the identification step.
+The outcome variable is ordinal (since it is measured on a 5-point Likert-scale).
+We can assume that the ordinal variable is an ordinal operationalization of an unmeasurable latent variables on a continuous scale, i.e., the true agreement to the statement that changes in requirements are not communicated.
+Hence, we use the `brms::cumulative` distribution family with a Probit link function.
+
+```{r define-formula}
+f1 <- bf(v_410 ~ 1 + v_380 + v_3l)
+
+get_prior(f1, data = d, family = cumulative("probit"))
+```
+
+### Priors
+
+We select uninformative priors for all coefficients, i.e., 0-centered normal distributions with wide variance.
+
+```{r set-priors}
+p1 <- c(
+  set_prior("normal(0, 1)", class = "Intercept"), 
+  set_prior("normal(0, 0.5)", class = "b")
+)
+```
+
+To assess the eligibility of these priors, we perform a prior predictive check.
+During this check, we sample from the model using the prior probability distributions for each factor coefficient without updating it in light of the data.
+
+```{r prior-predictive-check}
+m1.prior <-
+  brm(data = d, family = cumulative("probit"), formula = f1, prior = p1,
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 4, sample_prior="only",
+    file = "../fits/pxhy.prior", file_refit = "on_change"
+  )
+
+brms::pp_check(m1.prior, ndraws=100, type = "bars")
+```
+
+The sampled prior predictive checks (black whiskers labeled $y_{rep}$) overlap the actually observed data (blue bars labeled $y$), indicating that the selected priors entail the observed reality as realistic.
+
+### Training
+
+With the eligibility of the priors confirmed, we can train the Bayesian regression model, i.e., this time updating the coefficient distributions using Bayes' theorem.
+
+```{r model-training}
+m1 <-
+  brm(data = d, family = cumulative("probit"), formula = f1, prior = p1,
+    iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 4, 
+    file = "../fits/pxhy", file_refit = "on_change"
+  )
+```
+
+The training does not mention any diverging chains, which indicates solid sampling.
+To assess that the model has learned, we perform a posterior predictive check.
+
+```{r posterior-predictive-check}
+brms::pp_check(m1, ndraws=100, type="bars")
+```
+
+The posterior predictions $y_rep$ still overlap the actually observed data $y$ but the whiskers have grown closer to the data, which indicates that the model has learned.
+
+### Evaluation
+
+Finally, we can evaluate the results to answer the initially posed hypothesis.
+
+#### Posterior Distributions
+
+First, we can investigate the raw posterior distributions obtained from the model training.
+These distributions represent the effect that the respective factor has on the outcome variable.
+If a distribution is not consistent with 0 (i.e., it does not overlap with 0), then it can be considered statistically significant.
+
+```{r print-posteriors}
+summary(m1)
+```
+
+These distributions are, however, difficult to interpret, because they are in the parameter space (i.e., on a probit scale), not the outcome space.
+To investigate the effects on the outcome space (i.e., in terms of how they affect the likelihood to select a certain category of the Likert-scale), we need to assess the marginal effects.
+
+#### Marginal Effects
+
+To visualize the effect of the predictors on the outcome variable, we plot the marginal effects.
+Marginal effects isolate the effect of one predictor while keeping all other predictors at a representative level.
+
+
+## Conclusion
+
+The obtained results invite the following conclusions:
+
+[^1]: Siebert, J. (2023). Applications of statistical causal inference in software engineering. Information and Software Technology, 159, 107198.
+[^2]: McElreath, R. (2018). Statistical rethinking: A Bayesian course with examples in R and Stan. Chapman and Hall/CRC.
+[^3]: Gelman, A., Carlin, J. B., Stern, H. S., & Rubin, D. B. (1995). Bayesian data analysis. Chapman and Hall/CRC.

@@ -1,0 +1,17 @@
+---
+title: 'Analysis Pattern: Ranked Response'
+author: "Julian Frattini"
+date: "2025-08-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse) # dialect for R with enhanced data processing and visualization capabilities
+library(brms) # Bayesian modeling functions
+
+library(patchwork) # figure compositions
+```
+
+This notebook contains the pattern for the quantitative analysis of a ranked response variable.

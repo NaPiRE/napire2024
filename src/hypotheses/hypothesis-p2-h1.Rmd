@@ -1,0 +1,286 @@
+---
+title: 'Hypothesis H1 (P2): Communication Frequency impacts Change Communication'
+author: "Julian Frattini"
+date: "2025-12-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse) # R dialect for simpler data wrangling
+library(patchwork) # arranging and assembling figures
+library(ggdag) # visualizing directed acyclic graphs
+
+library(brms) # training of Bayesian regression models
+library(marginaleffects) # evaluation of Bayesian regression models
+
+source("../util/data-loader.R") # preparation of the raw data
+```
+
+This document investigates hypothesis $H_1^{P2}$ (originating from proposition 2):
+
+> *Communication frequency* impacts that *changes in requirements are not communicated*.
+
+*Communication frequency* and *changes are not communicated* are concepts operationalized by the following self-reported variables:
+
+> *The self-reported frequency of meeting team members* impacts the *agreement to the statement "Changes in requirements are not communicated" in their project.*
+
+For analysis, we follow the 3-step framework for statistical causal inference as summarized by Siebert.[^1]
+
+## Modeling
+
+The causal relationships were formalized in the following directed, acyclic graph (see proposition 2 for the full DAG):
+
+```{r specify-dag}
+dag <- dagify(
+  frequency ~ team.size,
+  changes ~ frequency + team.size,
+
+  exposure = "frequency",
+  outcome = "changes",
+  
+  labels = c(
+    frequency = "frequency", changes = "changes", team.size = "team-size"
+  ),
+  coords = list(
+    x = c(frequency = 0, changes = 0.5, team.size = 0),
+    y = c(frequency = 3, changes = 1.5, team.size = 0.5)
+  )
+)
+
+ ggdag_status(dag, use_labels = "label", text = FALSE) +
+   theme_dag() +
+   theme(legend.position = "bottom") +
+   labs(fill = "Variable type", color = "Variable type")
+```
+
+The three relevant variables in this hypothesis are:
+
+| Code | Group | Description | Variable |
+|---|---|---|---|
+| `frequency` | Communication | How often do members of your team meet, informally by chance meeting or in announced meetings? | `v_380` |
+| `changes` | Problems | How much do you agree or disagree with the following statements about your project: Changes in requirements are not communicated | `v_410` |
+| `team-size` | Demographics | How many people are involved in your project? | `v_3` |
+
+## Identification
+
+Based on the backdoor criterion, we can identify variables to statistically control
+
+```{r identify-adjustment-set}
+ggdag_adjustment_set(dag, exposure = "frequency", outcome = "changes")
+```
+
+We must adjust for the variable `team.size` to de-confound the effect of `frequency` on `changes`.
+
+## Estimation
+
+In the third step, we quantify the strength of the assumed causal effect.
+We employ a Bayesian data analysis approach following the guidelines of McElreath[^2] and Gelman et al.[^3]
+
+### Data Preparation
+
+We load the data from the 2024 run of the NaPiRE survey.
+The variables relevant to this hypothesis are `team.size` (`v_3`), `frequency` (`v_380`), and `changes` (`v_410`).
+We use the file *data_cleaned_2024.csv*, not the original *data_raw_2024.csv*, because `v_3` is a numeric variable but the original, raw file allowed strings (e.g., "12 people" instead of $12$) in this field.
+In the process, we make the following changes:
+
+- Dropping incomplete data: removing all observations containing `NA` values
+- Add log-teamsize: creating a separate variable $v\_3l = \log_{10}(v\_3)$ that reflects the *magnitude* of team size, not the raw team size itself
+- Removing "don't know": removing rows where `v_380` is "I don't know", as this data does not have any value to our analysis.
+
+All manual cleaning operations performed on the data are documented in the data cleaning protocol (to be found in data/runs/napire2024/data-cleaning-protocol.md).
+
+```{r load-data}
+d <- load_data(run = "2024", file = "../../data/runs/napire2024/data_cleaned_2024.csv") %>% 
+  select(v_3, v_380, v_410) %>%  
+  drop_na() %>% 
+  mutate(v_3l = log(v_3, base = 10)) %>% 
+  filter(v_380 != "I don't know")
+
+str(d)
+```
+
+Before starting with the analysis, we can visualize the distribution of the data.
+Ordinal variables are visualized as stacked bars.
+
+```{r visualize-data-ordinal}
+plot.distribution.v380 <- ggplot(d, aes(x = v_380, fill = v_380)) +
+    geom_bar() +
+    labs(x = "Meeting frequency", y = "Count") +
+    theme_bw() +
+    guides(fill = "none")
+
+plot.distribution.v410 <- ggplot(d, aes(x = v_410, fill = v_410)) +
+    geom_bar() +
+    labs(x = "Perceiving that requirements changes are not communicated", y = "Count") +
+    theme_bw() +
+    guides(fill = "none")
+
+plot.distribution.v380 / plot.distribution.v410
+```
+
+We can visualize the numeric data (i.e., `v_3` and its logarithmized form `v_3l`) with histograms.
+
+```{r visualize-data-numeric}
+plot.distribution.v3 <- ggplot(d, aes(x = v_3)) +
+  geom_histogram(bins = 40) +
+  labs(x = "Team size", y = "Count") +
+  theme_bw()
+
+plot.distribution.v3l <- ggplot(d, aes(x = v_3l)) +
+  geom_histogram(bins = 40) +
+  labs(x = "Magnitude of team size (log_10(team.size))", y = "Count") +
+  theme_bw()
+
+plot.distribution.v3 / plot.distribution.v3l
+```
+
+The logarithm of `team.size` $\log_{10}(v\_3)$ shows a Gaussian-looking distribution of team size magnitude.
+Both distributions represent the same variable and same data, just on different scales.
+
+### Formula
+
+Next, we specify a regression formula based on the identification step, i.e., when regressing `v_410` on `v_380`, we statistically control for the confounder `v_3l`.
+The outcome variable is ordinal (since it is measured on a 5-point Likert-scale).
+We can assume that the ordinal `v_410` is an ordinal operationalization of an unmeasurable latent variables on a continuous scale, i.e., the true agreement to the statement that changes in requirements are not communicated.
+Hence, we use the `brms::cumulative` distribution family with a Probit link function.
+
+```{r define-formula}
+f1 <- bf(v_410 ~ 1 + v_380 + v_3l)
+
+get_prior(f1, data = d, family = cumulative("probit"))
+```
+
+### Priors
+
+We select uninformative priors for all coefficients, i.e., 0-centered normal distributions with wide variance.
+
+```{r set-priors}
+p1 <- c(
+  set_prior("normal(0, 1)", class = "Intercept"), 
+  set_prior("normal(0, 0.5)", class = "b")
+)
+```
+
+To assess the eligibility of these priors, we perform a prior predictive check.
+During this check, we sample from the model using the prior probability distributions for each factor coefficient without updating it in light of the data.
+
+```{r prior-predictive-check}
+m1.prior <-
+  brm(data = d, family = cumulative("probit"), formula = f1, prior = p1,
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 4, sample_prior="only",
+    file = "../fits/p2h1.prior", file_refit = "on_change"
+  )
+
+brms::pp_check(m1.prior, ndraws=100, type = "bars")
+```
+
+The sampled prior predictive checks (black whiskers labeled $y_{rep}$) overlap the actually observed data (blue bars labeled $y$), indicating that the selected priors entail the observed reality as realistic.
+
+### Training
+
+With the eligibility of the priors confirmed, we can train the Bayesian regression model, i.e., this time updating the coefficient distributions using Bayes' theorem.
+
+```{r model-training}
+m1 <-
+  brm(data = d, family = cumulative("probit"), formula = f1, prior = p1,
+    iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 4, 
+    file = "../fits/p2h1", file_refit = "on_change"
+  )
+```
+
+The training does not mention any diverging chains, which indicates solid sampling.
+To assess that the model has learned, we perform a posterior predictive check.
+
+```{r posterior-predictive-check}
+brms::pp_check(m1, ndraws=100, type="bars")
+```
+
+The posterior predictions $y_rep$ still overlap the actually observed data $y$ but the whiskers have grown closer to the data, which indicates that the model has learned.
+
+### Evaluation
+
+Finally, we can evaluate the results to answer the initially posed hypothesis.
+
+#### Posterior Distributions
+
+First, we can investigate the raw posterior distributions obtained from the model training.
+These distributions represent the effect that the respective factor has on the outcome variable.
+If a distribution is not consistent with 0 (i.e., it does not overlap with 0), then it can be considered statistically significant.
+
+```{r print-posteriors}
+summary(m1)
+```
+
+These distributions are, however, difficult to interpret, because they are in the parameter space (i.e., on a probit scale), not the outcome space.
+To investigate the effects on the outcome space (i.e., in terms of how they affect the likelihood to select a certain category of the Likert-scale), we need to assess the marginal effects.
+
+#### Marginal Effects
+
+To visualize the effect of the predictors on the outcome variable, we plot the marginal effects.
+Marginal effects isolate the effect of one predictor while keeping all other predictors at a representative level.
+First, we visualize the effect of *meeting frequency* on *communication problems*.
+In the resulting plot, each dot and overlapping whisker represents the mean value and the credibility interval for the probability (y-axis) that a survey participant that meets their team with a given frequency (x-axis) would give a certain response (color) to the question "How much do you agree or disagree with the following statements about your project: Changes in requirements are not communicated." (`v_410`).
+
+```{r marginal-frequency}
+conditional_effects(m1, "v_380", categorical = TRUE, prob = 0.89)[[1]] %>% 
+  ggplot(aes(x = v_380, color = cats__)) +
+    geom_point(aes(y = estimate__), size = 2, position = position_dodge(width = 0.5)) +
+    geom_errorbar(aes(ymin = lower__, ymax = upper__), width = 0.3, position = position_dodge(width = 0.5)) +
+    labs(x = "Frequency of meeting the team", y = "Probability", color = "Response") +
+    scale_y_continuous(labels = scales::percent) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+The figure shows a noteworthy effect:
+Up until a specific point (bi-weekly meetings), the likelihood of a respondent strongly disagreeing with the statement of changes not being communicated sinks from 17% to 9% and disagreeing from 36% to 30%.
+At the same time, up until the same point, the likelihood of a respondent strongly agreeing rises from 3% to 6%, and agreeing rises from 21% to 30%.
+After that point, the effect is reversed.
+A filtered plot just focusing on the average response probabilities (i.e., without the whisker plot), leaving out the "No opinion"-option, and separating the two agreeing from the two disagreeing levels makes this effect even more clear.
+
+```{r marginal-frequency-simplified}
+conditional_effects(m1, "v_380", categorical = TRUE, prob = 0.89)[[1]] %>% 
+  filter(cats__ != "No opinion") %>% 
+  mutate(agree = ifelse(cats__ %in% c("Strongly Agree", "Agree"), "Agreeing", "Disagreeing")) %>% 
+  ggplot(aes(x = v_380, color = cats__)) +
+    geom_point(aes(y = estimate__), size = 2, position = position_dodge(width = 0.2)) +
+    geom_errorbar(aes(ymin = lower__, ymax = upper__), width = 0.2, position = position_dodge(width = 0.2)) +
+    geom_line(aes(y = estimate__, group = cats__), alpha = 0.7) +
+    labs(x = "Frequency of meeting the team", y = "Average probability", color = "Change not communicated") +
+    scale_y_continuous(labels = scales::percent) +
+    facet_wrap(~agree, ncol = 1) +
+    theme_bw()
+```
+
+Note that this plot connects the dots (i.e., the average probability per frequency) with lines, which is mathematically incorrect, as the x-axis is ordinal (i.e., categorical) and there is no continuum between two levels.
+The connecting lines are solely to visualize the trend better.
+
+Secondly, we can plot the marginal effect of the logarithm of team size (i.e., team size magnitude) on the outcome variable.
+For readability, we reduce the credibility intervals from 89% to 50%.
+
+```{r marginal-teamsize}
+conditional_effects(m1, "v_3l", categorical = TRUE, prob = 0.5)[[1]] %>% 
+  ggplot(aes(x = v_3l, fill = cats__)) +
+    geom_line(aes(y = estimate__, color = cats__, group = cats__,)) +
+    geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.2) +
+    labs(x = "Team size magnitude", y = "Probability", fill = "Response", color = "Response") +
+    theme_bw()
+```
+
+The larger the scale of the team, the more likely a respondent (strongly) agrees with the statement, and the less likely a respondent (strongly) disagrees with the statement of that requirements changes are not communicated.
+
+## Conclusion
+
+The obtained results invite the following conclusions:
+
+- There seems to be a negative sweet spot (sour spot?) for team meeting frequency: In the sample, respondents meeting their team bi-weekly perceive that changes in the requirements are not communicated the most. Both respondents that meet more frequently and that meet less frequently perceive this problem less, though more frequent meetings are superior to less frequent meetings. These two ends of the spectrum could indicate two different types of teams (tightly coupled vs. largely independent).
+- The greater the magnitude of the team, the more likely the respondent perceives that changes are not communicated. This generally suggests that communicating requirements change is more difficult in teams of larger dimension.
+
+Note that all of these concluded effects exhibit a certain level of uncertainty, which is visualized with confidence intervals in the results.
+
+[^1]: Siebert, J. (2023). Applications of statistical causal inference in software engineering. Information and Software Technology, 159, 107198.
+[^2]: McElreath, R. (2018). Statistical rethinking: A Bayesian course with examples in R and Stan. Chapman and Hall/CRC.
+[^3]: Gelman, A., Carlin, J. B., Stern, H. S., & Rubin, D. B. (1995). Bayesian data analysis. Chapman and Hall/CRC.
