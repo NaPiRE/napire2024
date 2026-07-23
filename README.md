@@ -57,7 +57,7 @@ This has two purposes:
 1. Via the use of Bayesian data analysis, these analyses produce **credibility intervals**, i.e., intervals of likelihood responding to a question with a specific response. Responses with intervals consistently above 20% likelihood can be considered *common*.
 2. Via marginal effects of the individual demographic factors, these analyses reveal effects of individual variables.
 
-To process these analyses, first consult the overview file [napire-24-variance.xlsx](src/variance/napire-24-variance.xlsx) consisting of the following columns:
+To process these analyses, first consult the overview file [napire-24-variance.xlsx](src/variance/napire-24-variance-ci89+95.xlsx) consisting of the following columns:
 
 - Code: the identifier of the variable in the NaPiRE data set
 - Question: the raw question text to which respondents answered
@@ -81,7 +81,7 @@ Exemplary publications that describe the initiative and which can be also used t
 - D. Mendez Fernandez, S. Wagner, M. Kalinowski, M. Felderer, P. Mafra, A. Vetrò, T. Conte, M.-T. Christiansson, D. Greer, C. Lassenius, T. Männistö, M. Nayebi, M. Oivo, B. Penzenstadler, D. Pfahl, R. Prikladnicki, G. Ruhe, A. Schekelmann, S. Sen, R. Spinola, J.L. de la Vara, A. Tuzcu, R. Wieringa. Naming the Pain in Requirements Engineering: Contemporary Problems, Causes, and Effects in Practice. In: Empirical Software Engineering Journal, Springer, 2016
 - S. Wagner, D. Mendez Fernandez, M. Kalinowski, M. Felderer, P. Mafra, A. Vetrò, T. Conte, M.-T. Christiansson, D. Greer, C. Lassenius, T. Männistö, M. Nayebi, M. Oivo, B. Penzenstadler, D. Pfahl, R. Prikladnicki, G. Ruhe, A. Schekelmann, S. Sen, R. Spinola, J.L. de la Vara, A. Tuzcu, R. Wieringa, and D. Winkler. Status Quo in Requirements Engineering: A Theory and a Global Family of Surveys. In: Transactions on Software Engineering and Methodology, 2019
 
-The authors' preprint versions of the manuscripts can be found on the [initiative's website](https://napire.org).
+The authors' preprint versions of the manuscripts can be found on the [initiative's website](http://napire.org).
 
 ## License
 
