@@ -1,0 +1,748 @@
+---
+title: "Descriptive Statistics"
+author: "Julian Frattini"
+date: "2026-01-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(readxl) # parser for .xlsx files
+library(tidyverse) # dialect of R for more elegant data wrangling and visualization
+library(patchwork) # arranging figures
+library(WorldMapR) # visualizing a distribution over countries of the world
+
+source("util/data-loader.R") # preparation of the raw data
+```
+
+This notebook contains the visualization of descriptive statistics of the NaPiRE 2024 run.
+These statistics serve to provide an overview of the status quo of requirements engineering in 2024.
+As such, they update the status quo previously published by Wagner et al.[^1]
+
+## Data Loading
+
+First, we load the data set with all its variables and retain only relevant columns.
+
+```{r load-data}
+d <- load_data_2024(data_path = "../data", file = "data_preprocessed.csv") %>% 
+  #select_if(c(negate(is.character)) %>% 
+  select(lfdn, duration, 
+         # meta-data
+         v_3, v_23, Country, ISO, v_1, v_457, v_16, v_357, v_377, v_17,
+         # communication
+         v_25, v_359, v_452, v_380, v_368,
+         # elicitation
+         v_28, v_29, v_572, v_34, v_36, v_37, v_38, v_39, v_40, v_41, v_42, v_43,
+         v_44, v_47, v_667, v_668, v_669, v_461, v_454, v_45,
+         # assumption
+         v_455,
+         # benefit
+         v_482, v_484, v_487,
+         # documentation
+         v_76, v_73, v_79, v_68, v_70, v_71, v_74, v_78, v_77, v_75, v_69, v_72,
+         v_466, v_557, v_576, v_80,
+         v_87, v_92, v_88, v_91, v_83, v_93, v_89, v_90, v_84, v_86, v_82, v_85,
+         v_463, v_558, v_575, v_95,
+         v_577,
+         v_670, v_671, v_672, v_673, v_674, v_675, v_676, v_677,
+         # non-functional requirements
+         v_97, v_98, v_99, v_100, v_101, v_102, v_303, v_103, v_422, v_104,
+         # reasons to stop requirements analysis
+         v_559, v_560, v_561, v_562, v_563, v_564, v_565, v_566, v_567, v_568, v_569,
+         # requirements validation
+         v_158, v_159, v_160, v_161, v_162, v_573, v_574, v_163,
+         # problems
+         v_385, v_386, v_418, v_409, v_410, v_388, v_389, v_392, v_393, v_394, 
+         v_395, v_396, v_397, v_399, v_401, v_402, v_403, v_404, v_411, v_405, 
+         v_408, v_407, v_406, v_387, v_417, v_459, v_571,
+         # top problems
+         v_661, v_662, v_663, v_664, v_665
+         )
+
+#str(d)
+```
+
+## Data Visualization
+
+### Meta-Data
+
+First, we visualize the demographic meta-data about participants.
+The first plot visualizes the answers to the question "In which country are you personally located?" (`v_23`).
+This plot shows the distribution of responses from all participants that completed at least the first two, real sections of the questionnaire ($n = 346$).
+
+```{r viz-v23-all}
+country.summary <- d %>%
+  filter(!(is.na(Country)) & !(is.na(v_28))) %>% 
+  group_by(ISO) %>% 
+  tally() %>% 
+  rename(Responses = "n")
+
+worldplot(data = data.frame(country.summary),
+          ColName = "Responses",
+          CountryName = "ISO",
+          CountryNameType = "isoa2",
+          rangeVal = c(0, max(country.summary$Responses)),
+          # annote = TRUE, # show country ISO code
+            )
+
+# uncomment to save the figure as a file
+ggsave(filename = "../figures/descriptive/participation.pdf", device = "pdf",
+       width = 10, height = 6, units = "in")
+```
+
+Alternatively, this second plot shows all the distribution of all fully completed responses ($n = 268$).
+
+```{r viz-v23-complete}
+country.summary <- d %>%
+  drop_na() %>% 
+  group_by(ISO) %>% 
+  tally() %>% 
+  rename(Responses = "n")
+
+worldplot(data = data.frame(country.summary),
+          ColName = "Responses",
+          CountryName = "ISO",
+          CountryNameType = "isoa2",
+          rangeVal = c(0, max(country.summary$Responses)),
+          # annote = TRUE, # show country ISO code
+            )
+```
+
+In the following, we will visualize only the distribution of responses that completed at least the first two real sections (i.e., filtering by `v_28`).
+
+Answers to the question "How many people are involved in your project?" (`v_3`)
+
+```{r viz-v3}
+d %>% 
+  filter(!(is.na(v_28)) & v_3 >= 0) %>% 
+  ggplot(aes(x = v_3)) +
+    geom_histogram(bins = 30) + 
+    labs(x = "People involved in the project", y = "Number of responses") +
+    theme_bw() +
+    ggtitle(paste0("People involved in a Project (n=", nrow(drop_na(select(d, v_28))), ")"))
+```
+
+Answers to the question "How many people are involved in your project?" (`v_3`) stratified by answers to the question "How would you personally characterise the way your project works?" (`v_457`), both on an absolute and a logarithmic scale.
+
+```{r viz-v3-v457}
+d %>% 
+  filter(!(is.na(v_28)) & v_3 >= 0) %>% 
+  select(lfdn, v_3, v_457) %>% 
+  mutate(v_3l = log(v_3)) %>% 
+  pivot_longer(cols = c(v_3, v_3l), names_to = "variable", values_to = "value") %>% 
+  mutate(variable = factor(variable,
+                           levels = c("v_3", "v_3l"),
+                           labels = c("absolute", "logarithmic"),
+                           ordered = TRUE)) %>% 
+  ggplot(aes(x = value, fill = v_457)) +
+    geom_histogram(bins = 20) + 
+    labs(x = "People involved in the project", y = "Number of responses", fill = "Way of working") +
+    facet_wrap(~variable, scales = "free") +
+    theme_bw() +
+    theme(legend.position = "bottom") +
+    ggtitle(paste0("People involved in a Project per different Ways-of-Working (n=", nrow(drop_na(select(d, v_28))), ")"))
+```
+
+Answers to the question "Please select the main industrial sector of your project or the application domain of the software you build." (v_1)
+
+```{r viz-v1}
+d %>% 
+  filter(!(is.na(v_28))) %>% 
+  ggplot(aes(y = v_1, fill = v_1)) +
+    geom_bar() +
+    labs(x = "Number of responses") +
+    theme_bw() +
+    theme(axis.title.y = element_blank()) +
+    guides(fill = "none") +
+    geom_text(aes(label = after_stat(count)), stat = "count", hjust = 1.5, vjust = 0.3, colour = "white",
+              size = 3) +
+    ggtitle(paste0("Main industrial sector of your project (n=", nrow(drop_na(select(d, v_28))), ")"))
+```
+
+Answers to the question "Does your project involve external partners?" (`v_16`).
+
+```{r viz-v16}
+d %>% 
+  filter(!(is.na(v_28))) %>% 
+  ggplot(aes(y = v_16)) +
+    geom_bar() +
+    geom_text(aes(label = after_stat(count)), stat = "count", hjust = 1.5, vjust = 0.3, colour = "white",
+              size = 3) +
+    labs(x = "Number of responses") +
+    theme_bw() +
+    theme(axis.title.y = element_blank()) +
+    ggtitle(paste0("Does your project involve external partners? (n=", nrow(drop_na(select(d, v_28))), ")"))
+```
+
+Answers to the question "Is your project distributed?" (`v_357`).
+
+```{r viz-v357}
+d %>% 
+  filter(!(is.na(v_28))) %>% 
+  ggplot(aes(y = v_357)) +
+    geom_bar() +
+    geom_text(aes(label = after_stat(count)), stat = "count", hjust = 1.5, vjust = 0.3, colour = "white",
+              size = 3) +
+    labs(x = "Number of responses") +
+    theme_bw() +
+    theme(axis.title.y = element_blank()) +
+    ggtitle(paste0("Is your project distributed? (n=", nrow(drop_na(select(d, v_28))), ")"))
+```
+
+Answers to the question "Do you tend to work from home, on-site, or both?" (`v_377`).
+
+```{r viz-v377}
+d %>% 
+  filter(!(is.na(v_28))) %>% 
+  ggplot(aes(y = v_377, fill = v_377)) +
+    geom_bar() +
+    geom_text(aes(label = after_stat(count)), stat = "count", hjust = 1.5, vjust = 0.3, colour = "white",
+              size = 3) +
+    labs(x = "Number of responses") +
+    theme_bw() +
+    theme(axis.title.y = element_blank()) +
+    guides(fill = "none") +
+    scale_y_discrete(limits = rev) +
+    ggtitle(paste0("Degree of Virtualization (n=", nrow(drop_na(select(d, v_28))), ")"))
+```
+
+Answers to the question "What is the main role you occupy in your project?" (`v_17`).
+
+```{r viz-v17}
+d %>% 
+  filter(!(is.na(v_28))) %>% 
+  ggplot(aes(y = v_17, fill = v_17)) +
+    geom_bar() +
+    geom_text(aes(label = after_stat(count)), stat = "count", hjust = 1.5, vjust = 0.3, colour = "white",
+              size = 3) +
+    labs(x = "Number of responses") +
+    theme_bw() +
+    theme(axis.title.y = element_blank()) +
+    guides(fill = "none") +
+    scale_y_discrete(limits = rev) +
+    ggtitle(paste0("Main role of the respondent (n=", nrow(drop_na(select(d, v_28))), ")"))
+```
+
+### Communication
+
+The second section contains communication-related variables.
+
+Answers to the three questions:
+
+1. How would you rate the relationship between your project's team and its customer? (`v_25`)
+2. How would you rate the quality of communication inside your team? (`v_359`)
+3. How would you rate the quality of communication between your team and other teams on the same project? (`v_452`)
+
+```{r viz-v25-v392-v452, fig.width=10, fig.height=4, unit="cm"}
+d %>% 
+  filter(!(is.na(v_28))) %>% 
+  select(v_25, v_359, v_452) %>% 
+  drop_na() %>% 
+  pivot_longer(cols = c(v_25, v_359, v_452), 
+               names_to = "question", values_to = "answer") %>%
+  mutate(question = factor(question, levels = c("v_25", "v_359", "v_452"),
+                           labels = c(
+                             "Customer relationship",
+                             "Intra-team communication",
+                             "Inter-team communication"
+                           ))) %>% 
+  ggplot(aes(y = question, fill = answer)) +
+    geom_bar(position = "stack", stat = "count") +
+    geom_text(aes(label = after_stat(count)), position = "stack", stat = "count", 
+              hjust = 1.2, colour = "white", size = 3) +
+    labs(x = "Number of responses", fill = "Options") +
+    theme_bw() +
+    theme(legend.position = "right", axis.title.y = element_blank()) +
+    #ggtitle(paste0("Rating Communication (n=", nrow(drop_na(select(d, v_28))), ")"))
+    guides(fill = guide_legend(reverse = TRUE)) +
+    scale_y_discrete(limits = rev)
+
+ggsave("../figures/descriptive/communication.pdf", device = "pdf",
+       width = 20, height = 5, unit = "cm")
+```
+
+Answers to the question "How often do members of your team meet, informally by chance meeting or in announced meetings?" (`v_380`) 
+
+```{r viz-380}
+d %>% 
+  filter(!(is.na(v_28))) %>% 
+  ggplot(aes(y = v_380)) +
+    geom_bar() +
+    geom_text(aes(label = after_stat(count)), stat = "count", 
+                hjust = 1, colour = "white", size = 3) +
+    labs(x = "Number of responses") +
+    theme_bw() +
+    theme(axis.title.y = element_blank())# +
+    #ggtitle(paste0("Meeting Frequency with the Team (n=", nrow(drop_na(select(d, v_28))), ")"))
+
+ggsave("../figures/descriptive/frequency-meeting.pdf", device = "pdf",
+       width = 10, height = 4, unit = "cm")
+```
+
+Answers to the question "How often is end user feedback provided" (`v_368`) 
+
+```{r viz-368}
+d %>% 
+  filter(!(is.na(v_28))) %>% 
+  ggplot(aes(y = v_368)) +
+    geom_bar() +
+    geom_text(aes(label = after_stat(count)), stat = "count", 
+                hjust = 1, colour = "white", size = 3) +
+    labs(x = "Number of responses") +
+    theme_bw() +
+    theme(axis.title.y = element_blank())# +
+    #ggtitle(paste0("Frequency of User Feedback (n=", nrow(drop_na(select(d, v_28))), ")"))
+
+ggsave("../figures/descriptive/frequency-feedback.pdf", device = "pdf",
+       width = 10, height = 4, unit = "cm")
+```
+
+### Requirements Elicitation
+
+Answers to the question "How are the requirements elicited in your project?"
+
+```{r viz-v28-v29-v572-v34}
+d %>% 
+  select(v_28, v_29, v_572, v_34) %>% 
+  drop_na() %>% 
+  pivot_longer(cols = c(v_28, v_29, v_572, v_34), 
+               names_to = "Option", values_to = "Response") %>% 
+  mutate(Option = factor(Option, levels = c("v_28", "v_29", "v_572", "v_34"),
+                           labels = c(
+                             "Agile: we elicit and / or refine requirements \n in several iterations. (v_28)",
+                             "Waterfall: we elicit and / or refinerequirements \n in a specifically dedicated project phase \n before proceeding to the next project phase. (v_29)",
+                             "I don't know (v_572)",
+                             "Other (v_34)"
+                           ))) %>% 
+  ggplot(aes(y = Option, fill = Response)) +
+    geom_bar(position = "stack", stat = "count") +
+    geom_text(aes(label = after_stat(count)), position = "stack", stat = "count", 
+              hjust = 1.2, colour = "white", size = 3) +
+    labs(x = "Number of responses", y = "Options", fill = "Answer") +
+    theme_bw() +
+    theme(legend.position = "bottom") +
+    ggtitle(paste0("Requirements Elicitation (n=", nrow(drop_na(select(d, v_28))), ")"))
+```
+
+Answers to the question "Which techniques are employed to elicit requirements in your project?"
+
+```{r viz-v36}
+d %>% 
+  select(v_36, v_37, v_38, v_39, v_40, v_41, v_42, v_43, v_44, v_47, v_667,
+         v_668, v_669, v_461, v_454, v_45) %>% 
+  drop_na() %>% 
+  pivot_longer(cols = everything(), 
+               names_to = "Option", values_to = "Response") %>%
+  filter(Response == TRUE) %>% 
+  mutate(Option = factor(Option, levels = c("v_36", "v_37", "v_38", "v_39", 
+                                            "v_40", "v_41", "v_42", "v_43", 
+                                            "v_44", "v_47", "v_667", "v_668", 
+                                            "v_669", "v_461", "v_454", "v_45"),
+                           labels = c("Interviews", "Document Analysis", "Risk Analyses",
+                                      "Prototyping", "Workshops and Focus Group",
+                                      "(Requirements) Reuse Databases and Guidelines",
+                                      "Design Thinking", "External Experts", 
+                                      "Observations", "Outsourcing", 
+                                      "Usage Data Analysis", "Lean Startup", 
+                                      "Experimentation with Users", "I don't know",
+                                      "None of the Above", "Other"
+                           ))) %>%
+  mutate(Option = fct_rev(fct_infreq(Option))) %>%
+  ggplot(aes(y = Option)) +
+    geom_bar(position = "stack", stat = "count") +
+    geom_text(aes(label = after_stat(count)), position = "stack", stat = "count",
+              hjust = 1.2, colour = "white", size = 3) +
+    labs(x = "Number of responses") +
+    theme_bw() +
+    theme(axis.title.y = element_blank())
+    #theme(legend.position = "bottom") +
+    #ggtitle(paste0("Techniques for Requirements Elicitation (n=", nrow(drop_na(select(d, v_36))), ")"))
+
+ggsave("../figures/descriptive/elicitation-techniques.pdf", device = "pdf",
+       width = 18, height = 9, unit = "cm")
+```
+
+### Assumptions
+
+Answers to the question "If you are in a situation where you lack information and have to make an assumption to proceed in your project, what do you typically do?"
+
+```{r viz-v455, fig.width=10, fig.height=4, unit="cm"}
+d %>% 
+  select(v_455) %>% 
+  drop_na() %>% 
+  ggplot(aes(y = v_455)) +
+    geom_bar() +
+    geom_text(aes(label = after_stat(count)), position = "stack", stat = "count",
+                hjust = 1.2, colour = "white", size = 3) +
+    theme_bw() +
+    labs(x = "Number of responses", y = "Option") +
+    ggtitle(paste0("Making Assumptions (n=", nrow(drop_na(select(d, v_455))), ")"))
+```
+
+### Benefit
+
+Answers to the question "Suppose that you know that the only people who benefit from a document that you must produce are people other than the project's current members. Rate the following based on what best describes your behavior and thinking."
+
+```{r viz-v482, fig.width=10, fig.height=4, unit="cm"}
+d %>% 
+  select(v_482, v_484, v_487) %>% 
+  drop_na() %>% 
+  pivot_longer(cols = everything(), 
+               names_to = "question", values_to = "answer") %>%
+  mutate(question = factor(question, levels = c("v_482", "v_484", "v_487"),
+                           labels = c(
+                             "Produce document willingly",
+                             "Produce document anyway",
+                             "Don't produce document"
+                           )),
+    answer = fct_rev(answer),
+    textcolor = if_else(as.integer(answer) <= 3, "white", "black")
+    ) %>% 
+  ggplot(aes(y = question, fill = answer)) +
+    geom_bar(position = "stack", 
+             stat = "count") +
+    geom_text(aes(label = after_stat(count), color = textcolor, group = answer), 
+              position = "stack", stat = "count", 
+              hjust = 1.2, size = 3) +
+    labs(x = "Number of responses", fill = "Option") +
+    scale_fill_viridis_d() +
+    scale_color_identity() +
+    theme_bw() +
+    theme(legend.position = "right", axis.title.y = element_blank()) +
+    guides(fill = guide_legend(reverse = TRUE)) +
+    scale_y_discrete(limits = rev)
+    #ggtitle(paste0("Unknown Benefit (n=", nrow(drop_na(select(d, v_482))), ")"))
+
+ggsave("../figures/descriptive/benefit.pdf", device = "pdf",
+       width = 20, height = 6, unit = "cm")
+```
+
+### Documentation
+
+Answers to the question "Which information do you explicitly document when dealing with requirements?"
+
+```{r viz-v76}
+d %>% 
+  select(v_76, v_73, v_79, v_68, v_70, v_71, v_74, v_78, v_77, v_75, v_69, v_72,
+         v_466, v_557, v_576, v_80) %>% 
+  drop_na() %>% 
+  pivot_longer(cols = everything(), 
+               names_to = "Option", values_to = "Response") %>% 
+  mutate(Option = factor(Option, levels = c("v_76", "v_73", "v_79", "v_68", 
+                                            "v_70", "v_71", "v_74", "v_78", 
+                                            "v_77", "v_75", "v_69", "v_72",
+                                            "v_466", "v_557", "v_576", "v_80"),
+                           labels = c(
+                             "Architectural constraints", "Development process aspects",
+                             "Formal properties of the system", 
+                             "Functional properties of the system",
+                             "Goals", "Quality properties of the system",
+                             "(Business) rules", "Stakeholders", "System behavior",
+                             "Technical interfaces", "Usage scenarios",
+                             "User interface(s)", "Internal or external constraints",
+                             "Acceptance criteria", "I don't know", "Other"
+                           ))) %>%
+  filter(Response == TRUE) %>% 
+  mutate(Option = fct_rev(fct_infreq(Option))) %>%
+  ggplot(aes(y = Option)) +
+    geom_bar(position = "stack", stat = "count") +
+    geom_text(aes(label = after_stat(count)), position = "stack", stat = "count",
+              hjust = 1.2, colour = "white", size = 3) +
+    labs(x = "Number of responses", y = "Options") +
+    theme_bw() +
+    theme(legend.position = "bottom") +
+    theme(axis.title.y = element_blank())
+    #ggtitle(paste0("Information to Document (n=", nrow(drop_na(select(d, v_76))), ")"))
+
+ggsave("../figures/descriptive/document-information.pdf", device = "pdf",
+       width = 10, height = 9, unit = "cm")
+```
+
+Answers to the question "How do you document requirements?"
+
+```{r viz-v87}
+d %>% 
+  select(v_87, v_92, v_88, v_91, v_83, v_93, v_89, v_90, v_84, v_86, v_82, v_85,
+         v_463, v_558, v_575, v_95) %>% 
+  drop_na() %>% 
+  pivot_longer(cols = everything(), 
+               names_to = "Option", values_to = "Response") %>% 
+  mutate(Option = factor(Option, levels = c("v_87", "v_92", "v_88", "v_91", 
+                                            "v_83", "v_93", "v_89", "v_90", 
+                                            "v_84", "v_86", "v_82", "v_85",
+                                            "v_463", "v_558", "v_575", "v_95"),
+                           labels = c(
+                             "Activity diagrams", "Business process models",
+                             "Class diagrams", "Goal models", 
+                             "Natural language text",
+                             #"Natural language or informal (plain) text",
+                             "Prototypes or user screens", "Sequence diagrams",
+                             "State machines", "Structured lists of requirements",
+                             "Use case diagrams", "Use cases", "User stories",
+                             "Acceptance criteria", "Informal sketches", 
+                             "I don't know", "Other"
+                           ))) %>%
+  filter(Response == TRUE) %>% 
+  mutate(Option = fct_rev(fct_infreq(Option))) %>%
+  ggplot(aes(y = Option)) +
+    geom_bar(position = "stack", stat = "count") +
+    geom_text(aes(label = after_stat(count)), position = "stack", stat = "count",
+              hjust = 1.2, colour = "white", size = 3) +
+    labs(x = "Number of responses") +
+    theme_bw() +
+    theme(axis.title.y = element_blank()) #+
+    #ggtitle(paste0("Types of Documentation (n=", nrow(drop_na(select(d, v_87))), ")"))
+
+ggsave("../figures/descriptive/document-types.pdf", device = "pdf",
+       width = 10, height = 9, unit = "cm")
+```
+
+Answers to the question "Have you ever failed to document one or more requirements?"
+
+```{r viz-v577}
+d %>% 
+  select(v_577) %>% 
+  drop_na() %>% 
+  ggplot(aes(y = v_577)) +
+    geom_bar() +
+    theme_bw() +
+    labs(x = "Number of responses", y = "Options") +
+    ggtitle(paste0("Failed to Document Requirements? (n=", nrow(drop_na(select(d, v_577))), ")"))
+```
+
+Answers to the question "Check as many reasons for failing to document requirements that have applied in at least one circumstance."
+
+```{r viz-v670}
+d %>% 
+  select(v_670, v_671, v_672, v_673, v_674, v_675, v_676, v_677) %>% 
+  drop_na() %>% 
+  pivot_longer(cols = everything(), 
+               names_to = "Option", values_to = "Response") %>% 
+  mutate(Option = factor(Option, levels = c("v_670", "v_671", "v_672", "v_673", 
+                                            "v_674", "v_675", "v_676", "v_677"),
+                           labels = c(
+                             "I didn't need to document it. I know it.",
+                             "I knew that if I documented this requirement, \n my colleagues would complain/hate/ridicule me.",
+                             "My project lead told me not to bother.",
+                             "My project lead told me not to spend any \n time on documenting requirements.",
+                             "My project lead told me not to waste any time/ \n anymore time on documenting requirements.",
+                             "My colleagues told me not to bother.",
+                             "My colleagues told me not to spend any \n time on documenting requirements.",
+                             "My colleagues told me not to waste any time/ \n anymore time on documenting requirements."
+                           ))) %>%
+  filter(Response == TRUE) %>% 
+  mutate(Option = fct_rev(fct_infreq(Option))) %>%
+  ggplot(aes(y = Option)) +
+    geom_bar(position = "stack", stat = "count") +
+    geom_text(aes(label = after_stat(count)), position = "stack", stat = "count",
+              hjust = 1.2, colour = "white", size = 3) +
+    labs(x = "Number of responses") +
+    theme_bw() +
+    theme(axis.title.y = element_blank()) #+
+    #ggtitle(paste0("Reasons for Failing to Document (n=", nrow(drop_na(select(d, v_670))), ")"))
+
+ggsave("../figures/descriptive/failure-reasons.pdf", device = "pdf",
+       width = 14, height = 7, unit = "cm")
+```
+
+### Non-functional Requirements
+
+Answers to the question "Which classes of non-functional requirements do you explicitly consider in your requirements documentation?"
+
+```{r viz-v97}
+d %>% 
+  select(v_97, v_98, v_99, v_100, v_101, v_102, v_303, v_103, v_422, v_104) %>% 
+  drop_na() %>% 
+  pivot_longer(cols = everything(), 
+               names_to = "NFR", values_to = "Response") %>% 
+  mutate(NFR = factor(NFR, levels = c("v_97", "v_98", "v_99", "v_100", 
+                                            "v_101", "v_102", "v_303", "v_103", 
+                                            "v_422", "v_104"),
+                           labels = c("Compatibility", "Maintainability", 
+                                      "Performance efficiency", "Portability",
+                                      "Reliability", "Safety", "Security",
+                                      "Usability", "Constraints", "Other"
+                           ))) %>%
+  filter(Response == TRUE) %>% 
+  mutate(NFR = fct_rev(fct_infreq(NFR))) %>%
+  ggplot(aes(y = NFR)) +
+    geom_bar(position = "stack", stat = "count") +
+    geom_text(aes(label = after_stat(count)), position = "stack", stat = "count",
+              hjust = 1.2, colour = "white", size = 3) +
+    labs(x = "Number of responses") +
+    theme_bw() +
+    theme(axis.title.y = element_blank()) #+
+    #ggtitle(paste0("Documented Classes of Non-Functional Requirements (n=", nrow(drop_na(select(d, v_97))), ")"))
+
+ggsave("../figures/descriptive/nfrs.pdf", device = "pdf",
+       width = 14, height = 7, unit = "cm")
+```
+
+### Stopping Requirements Analysis
+
+Answers to the question "Stated below are possible reasons for stopping the requirements analysis process and producing a requirements specification, capturing only what is known at the moment. Indicate your level of agreement or disagreement with the applicability of the reasons to your project."
+
+```{r viz-v559, fig.width=12, fig.heigh=6, unit="cm"}
+d %>% 
+  select(v_559, v_560, v_561, v_562, v_563, v_564, v_565, v_566, v_567, v_568, v_569) %>% 
+  drop_na() %>% 
+  pivot_longer(cols = everything(), 
+               names_to = "question", values_to = "answer") %>%
+  mutate(
+    question = factor(question, levels = c("v_559", "v_560", "v_561", "v_562", 
+                                                "v_563", "v_564", "v_565", "v_566", 
+                                                "v_567", "v_568", "v_569"),
+                           labels = c(
+                             "The entire project was terminated.",
+                             "The project plan says that now is\n the scheduled end of requirements analysis.",
+                             "The project leader decided that we have\n spent enough time on requirements analysis.",
+                             "The project leader decided that we have wasted\n enough time on requirements analysis.",
+                             "The project leader decided that if we don't start implementation\n now, we would not finish implementation in time.",
+                             "The project members collectively agreed that we have\n spent enough time on requirements analysis.",
+                             "The project members collectively agreed that we have\n wasted enough time on requirements analysis.",
+                             "The project members collectively agreed that if we don't start\n implementation now, we would not finish implementation in time.",
+                             "We were just itching to get started on the implementation.",
+                             "We've wasted enough time just thinking and writing prose.",
+                             "It's time to get started on the real work."
+                           )),
+    answer = fct_rev(answer),
+    textcolor = if_else(as.integer(answer) <= 3, "white", "black")
+    ) %>% 
+  ggplot(aes(y = question, fill = answer)) +
+    geom_bar(position = "stack", stat = "count") +
+    geom_text(aes(label = after_stat(count), color = textcolor, group = answer), 
+              position = "stack", stat = "count", 
+              hjust = 1.2, size = 3) +
+    labs(x = "Number of responses", fill = "Option") +
+    scale_fill_viridis_d() +
+    scale_color_identity() +
+    theme_bw() +
+    theme(legend.position = "bottom", axis.title.y = element_blank()) +
+    guides(fill = guide_legend(reverse = TRUE)) +
+    scale_y_discrete(limits = rev)
+    #ggtitle(paste0("Reasons for Stopping the Requirements Analysis Process (n=", nrow(drop_na(select(d, v_559))), ")"))
+
+ggsave("../figures/descriptive/stopping.pdf", device = "pdf",
+       width = 24, height = 14, unit = "cm")
+```
+
+### Requirements Validation
+
+Answers to the question "How do you align software testing with requirements?"
+
+```{r viz-v158, fig.width=10, fig.height=4, unit="cm"}
+d %>% 
+  select(v_158, v_159, v_160, v_161, v_162, v_573, v_574, v_163) %>% 
+  drop_na() %>% 
+  pivot_longer(cols = everything(), 
+               names_to = "NFR", values_to = "Response") %>% 
+  mutate(NFR = factor(NFR, levels = c("v_158", "v_159", "v_160", "v_161", "v_162", 
+                                      "v_573", "v_574", "v_163"),
+                           labels = c("Testers participate in requirements reviews.",
+                                      "We check the coverage of requirements with tests.",
+                                      "We define acceptance criteria and tests for requirements.",
+                                      "We derive tests from system models.",
+                                      "We do not align tests and requirements.",
+                                      "I don't know.", "Does not apply.", "Other"
+                           ))) %>%
+  filter(Response == TRUE) %>% 
+  mutate(NFR = fct_rev(fct_infreq(NFR))) %>%
+  ggplot(aes(y = NFR)) +
+    geom_bar(position = "stack", stat = "count") +
+    geom_text(aes(label = after_stat(count)), position = "stack", stat = "count",
+              hjust = 1.2, colour = "white", size = 3) +
+    labs(x = "Number of responses") +
+    theme_bw() +
+    theme(axis.title.y = element_blank())# +
+    #ggtitle(paste0("Alignment of Software Testing with Requirements (n=", nrow(drop_na(select(d, v_158))), ")"))
+
+
+ggsave("../figures/descriptive/testing.pdf", device = "pdf",
+       width = 14, height = 5, unit = "cm")
+```
+
+### Problems
+
+Answers to the question "How much do you agree or disagree with the following statements about your project?"
+
+```{r viz-v585, fig.width=12, fig.height=8, unit="cm"}
+d %>% 
+  select(v_385, v_386, v_418, v_409, v_410, v_388, v_389, v_392, v_393, v_394, 
+         v_395, v_396, v_397, v_399, v_401, v_402, v_403, v_404, v_411, v_405, 
+         v_408, v_407, v_406, v_387, v_417, v_459, v_571) %>% 
+  drop_na() %>% 
+  pivot_longer(cols = everything(), 
+               names_to = "question", values_to = "answer") %>%
+  mutate(question = factor(question, 
+                           levels = c("v_385", "v_386", "v_418", "v_409", "v_410", 
+                                      "v_388", "v_389", "v_392", "v_393", "v_394",
+                                      "v_395", "v_396", "v_397", "v_399", "v_401", 
+                                      "v_402", "v_403", "v_404", "v_411", "v_405",
+                                      "v_408", "v_407", "v_406", "v_387", "v_417", 
+                                      "v_459", "v_571"),
+                           labels = c(
+                             "Communication flaws within our project team.",
+                             "Communication flaws between the project and the customer.",
+                             "Lack of communication between the project team and end users.",
+                             "Communication channels used in our project are ineffective.",
+                             "Changes in requirements are not communicated.",
+                             "Incomplete or hidden requirements",
+                             "Insufficient support by our project lead.",
+                             "Inconsistent requirements",
+                             "Requirements are not traceable.",
+                             "Targets are moving",
+                             "Gold plating",
+                             "Weak access to customer needs",
+                             "Weak knowledge about customer's application domain",
+                             "We do not have enough time to carry out tasks.",
+                             "Technically unfeasible requirements",
+                             "Underspecified requirements that are too abstract",
+                             "Unclear or unmeasurable non-functional requirements",
+                             "Lack of trust between our project team members",
+                             "Lack of trust between our project team members and stakeholder",
+                             "An important stakeholder is not represented in our project",
+                             "Our team's responsibilities are unclear",
+                             "Problems with terminology",
+                             "Language barriers",
+                             "Lack of commitment to shared project goals",
+                             "No standard format for documenting requirements",
+                             "Our requirements engineers lack enthusiasm or commitment",
+                             "Internal or external constraints are not considered"
+                           ))) %>% 
+  ggplot(aes(y = question, fill = answer)) +
+    geom_bar(position = "stack", stat = "count") +
+    geom_text(aes(label = after_stat(count)), position = "stack", stat = "count", 
+              hjust = 1.2, colour = "white", size = 3) +
+    labs(x = "Number of responses", y = "Question", fill = "Answer") +
+    theme_bw() +
+    theme(legend.position = "bottom") +
+    ggtitle(paste0("Problems in Requirements Engineering (n=", nrow(drop_na(select(d, v_385))), ")"))
+```
+
+### Top Problems
+
+Answers to the question "Considering your personally experienced problems stated in the previous question, which ones would you classify as the five most critical ones?"
+
+```{r viz-v661, fig.width=12, fig.height=12, unit="cm"}
+d %>% 
+  select(v_661, v_662, v_663, v_664, v_665) %>% 
+  drop_na() %>% 
+  pivot_longer(cols = everything(), names_to = "Rank", values_to = "Response") %>% 
+  mutate(Rank = factor(Rank, levels = c("v_661", "v_662", "v_663", "v_664", "v_665"),
+                       labels = c("Top 1", "Top 2", "Top 3", "Top 4", "Top 5"),
+                       ordered = TRUE)) %>% 
+  filter(Response != "-") %>% 
+  ggplot(aes(y = Response, fill = Rank)) +
+    geom_bar(position = "stack", stat = "count") + 
+    geom_text(aes(label = after_stat(count)), position = "stack", stat = "count", 
+              hjust = 1.2, colour = "white", size = 3) +
+    labs(x = "Number of responses", y = "Problems", fill = "Rank") +
+    #scale_fill_ordinal(limits = rev) +
+    theme_bw() +
+    theme(legend.position = "bottom") +
+    ggtitle(paste0("Critical Problems in Requirements Engineering (n=", nrow(drop_na(select(d, v_661))), ")"))
+```
+
+
+[^1] Wagner, S., Fernández, D. M., Felderer, M., Vetrò, A., Kalinowski, M., Wieringa, R., ... & Winkler, D. (2019). Status quo in requirements engineering: A theory and a global family of surveys. _ACM Transactions on Software Engineering and Methodology (TOSEM)_, _28_(2), 1-48.
