@@ -1,0 +1,336 @@
+---
+title: "Variance of VARIABLES"
+author: "Julian Frattini"
+date: "2026-04-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse) # R dialect for simpler data wrangling
+library(patchwork) # arranging and assembling figures
+library(ggdag) # visualizing directed acyclic graphs
+
+library(brms) # training of Bayesian regression models
+library(marginaleffects) # evaluation of Bayesian regression models
+
+source("../util/data-loader.R") # preparation of the raw data
+```
+
+This notebook contains the analysis of the variance across demographic factors of responses to the question "Suppose that you know that the only people who benefit from a document that you must produce are people other than the project’s current members."
+The question requires rating the following statements:
+
+| Code | Name | Text |
+|---|---|---|
+| `v_482` | Essential | I produce the document willingly because I know it's essential. |
+| `v_484` | Duty | Even though I don't want to produce the document, I produce it anyway, because I know it's essential for the future of the project. |
+| `v_487` | Ignore | I don't produce the document, because the current members of the project do not need it. |
+
+All questions were answered on the following ordinal scale: Strongly disagree, Disagree, No opinion, Agree, Strongly agree
+
+```{r configuration}
+# short name of the question
+q = "reaction to unknown benefit"
+# list of variables representing the statements for the question
+v <- c("v_482", "v_484", "v_487")
+# names of the variables
+labels <- c("Essential", "Duty", "Ignore")
+# names of the options
+options <- c("Strongly disagree", "Disagree", "No opinion", "Agree", "Strongly Agree")
+
+# minimum likelihood of responses to be considered "common"
+level.common <- 0.2
+```
+
+## Variables
+
+We consider the following demographic factors:
+
+| Code | Name | Question | Type |
+|---|---|---|---|
+| `v_23` | country | In which country are you personally located? | categorical |
+| `v_3` | size | How many people are involved in your project? | numeric |
+| `v_457` | way of working | How would you personally characterise the way your project works? | ordinal |
+| `v_1` | sector | Please select the main industrial sector of your project or the application domain of the software you build. | categorical |
+| `v_16` | external | Does your project involve external partners? | binary |
+| `v_357` | distributed | Is your project distributed? | binary |
+| `v_377` | virtualization | Do you tend to work from home, on-site, or both? | ordinal |
+| `v_17` | role | What is the main role you occupy in your project? | categorical |
+
+## Data Analysis
+
+We analyze the variance of the response variable following established practices of Bayesian data analysis.[^2]
+
+```{r load-data}
+d <- load_data(run = "2024", data_path = "../../data", file = "runs/napire2024/data_cleaned_2024.csv") %>% 
+  select(
+    "lfdn", # respondent identifier
+    "v_3", "Country", "v_1", "v_457", "v_16", "v_357", "v_377", "v_17", # demographic factors
+    all_of(v) # response variables
+    ) %>% 
+  drop_na()
+
+str(d)
+```
+
+For each outcome variable, we train one Bayesian regression model on all demographic variables as predictors.
+
+### Modelling
+
+First, we define a formula regressing the outcome variable of interest on the demographic factors
+
+```{r define-formula}
+f <- 
+  eval(parse(text = paste0("bf(mvbind(", 
+                           paste(v, collapse = ", "),
+                           ") ~ 1 + v_3 + Country + v_1 + v_457 + v_16 + v_357 + v_377 + v_17)",
+                           "+ set_rescor(FALSE)")))
+
+# get_prior(f, data = d, family = cumulative("probit"))
+```
+
+For each coefficient implied by a predictor, we specify a prior based on domain knowledge.
+
+```{r set-priors}
+p <- c(
+  set_prior("normal(0, 1)", class = "Intercept", resp = gsub("_", "", v)), 
+  set_prior("normal(0, 0.2)", class = "b", resp = gsub("_", "", v))
+)
+```
+
+Since the response variables are all on the same ordinal scale, we model them using a multivariate cumulative distrubition utilizing a probit link to the parameter space of $p$.
+
+```{r prior-predictive-check}
+m.prior <-
+  brm(data = d, family = cumulative("probit"), formula = f, prior = p,
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 4, sample_prior="only",
+    file = paste0("../fits/variance.", v[1], ".prior"), file_refit = "on_change"
+  )
+
+brms::pp_check(m.prior, ndraws=100, type = "bars", resp = gsub("_", "", v[1]))
+```
+
+The prior predictive check (for one of the response variable options) confirms the plausibility of the selected prior probability distribution.
+Given the number of predictors, the weight towards the extreme values is anticipated.
+Next, we update the coefficient distributions in light of the collected data using Monte Carlo Markov Chain sampling.
+
+```{r model-training}
+m <-
+  brm(data = d, family = cumulative("probit"), formula = f, prior = p,
+    iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 4, init = 0,
+    file = paste0("../fits/variance.", v[1]), file_refit = "on_change"
+  )
+
+brms::pp_check(m, ndraws=100, type="bars", resp = gsub("_", "", v[1]))
+```
+
+The posterior predictive check (for one of the response variable options) shows that the model predictions ($y_{rep}$) have grown closer to the actually observed data (`y`).
+This confirms that the model has trained well.
+
+### Evaluation
+
+We visualize the marginal effect of each demographic factor on every response option to determine, (1) whether an option can be viewed as "common", and (2) whether the levels of the demographic factor affect the responses to this question.
+First, we investigate the effect of the sector (`v_1`) on all response options.
+
+```{r marginal-v1, fig.width=12, fig.height=12, unit="cm"}
+conditional_effects(m, "v_1", categorical = TRUE, prob = 0.89) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>%
+  mutate(
+    response = factor(response, levels = gsub("_", "", v),
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  ) %>%
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    facet_wrap(~response) +
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "Sector", color = "Options") +
+    ggtitle(paste0("Sector affecting ", q)) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+The next figure shows the marginal effect of the project size (`v_3`) on the outcomes.
+
+```{r marginal-v3, fig.width=12, fig.height=5, unit="cm"}
+conditional_effects(m, "v_3", categorical = TRUE, prob = 0.89) %>%
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>%
+  mutate(
+    response = factor(response, levels = gsub("_", "", v),
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  ) %>%
+  ggplot(aes(x = effect1__)) +
+    geom_line(aes(y = estimate__, color = effect2__)) +
+    geom_ribbon(aes(ymin = lower__, ymax = upper__, fill = effect2__), alpha = 0.2) +
+    geom_hline(yintercept = level.common, color = "grey", linetype = "dashed") +
+    facet_wrap(~response) +
+    labs(x = "Project size", y = "Likelihood of selecting the option",
+         color = "Options" , fill = "Options") +
+    scale_y_continuous(labels = scales::percent) +
+    ggtitle(paste0("Project size affecting ", q)) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+The following figure shows the marginal effect of the country (`Country`) on the outcomes.
+
+```{r marginal-country, fig.width=12, fig.height=18, unit="cm"}
+conditional_effects(m, "Country", categorical = TRUE, prob = 0.89) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>% 
+  mutate(
+    response = factor(response, levels = gsub("_", "", v), 
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  ) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    facet_wrap(~response) + 
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "Country", color = "Options") + 
+    ggtitle(paste0("Country affecting ", q)) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+The next figure shows the variance induced by the way-of-working (`v_457`).
+
+```{r marginal-v457, fig.width=12, fig.height=5, unit="cm"}
+conditional_effects(m, "v_457", categorical = TRUE, prob = 0.89) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>% 
+  mutate(
+    response = factor(response, levels = gsub("_", "", v), 
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  ) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    facet_wrap(~response) + 
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "Way-of-working", color = "Options") + 
+    ggtitle(paste0("Way-of-working affecting ", q)) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+The next figure shows the variance induced by whether or not the project includes external partners (`v_16`).
+
+```{r marginal-v16, fig.width=12, fig.height=4, unit="cm"}
+conditional_effects(m, "v_16", categorical = TRUE, prob = 0.89) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>% 
+  mutate(
+    response = factor(response, levels = gsub("_", "", v), 
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  ) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    facet_wrap(~response) + 
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "External partners", color = "Options") + 
+    ggtitle(paste0("External partners affecting ", q)) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+The next figure shows the variance induced by whether or not the project is distributed (`v_357`).
+
+```{r marginal-v357, fig.width=12, fig.height=3, unit="cm"}
+conditional_effects(m, "v_357", categorical = TRUE, prob = 0.89) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>% 
+  mutate(
+    response = factor(response, levels = gsub("_", "", v), 
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  ) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    facet_wrap(~response) + 
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "Distributed project", color = "Options") + 
+    ggtitle(paste0("Distributed project affecting ", q)) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+The next figure shows the variance induced by the degree of virtualization (`v_377`).
+
+```{r marginal-v377, fig.width=12, fig.height=5, unit="cm"}
+conditional_effects(m, "v_377", categorical = TRUE, prob = 0.89) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>% 
+  mutate(
+    response = factor(response, levels = gsub("_", "", v), 
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  ) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    facet_wrap(~response) + 
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "Degree of virtualization", color = "Options") + 
+    ggtitle(paste0("Degree of virtualization affecting ", q)) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+The final figure shows the variance induced by the main role of the participant (`v_17`).
+
+```{r marginal-v17, fig.width=12, fig.height=8, unit="cm"}
+conditional_effects(m, "v_17", categorical = TRUE, prob = 0.89) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>% 
+  mutate(
+    response = factor(response, levels = gsub("_", "", v), 
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  ) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    facet_wrap(~response) + 
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "Main role in the project", color = "Options") + 
+    ggtitle(paste0("Main role affecting ", q)) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+[^2]: McElreath, R. (2018). Statistical rethinking: A Bayesian course with examples in R and Stan. Chapman and Hall/CRC.

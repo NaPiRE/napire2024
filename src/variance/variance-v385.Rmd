@@ -1,0 +1,533 @@
+---
+title: "Variance of Perceived Problems"
+author: "Julian Frattini"
+date: "2026-04-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse) # R dialect for simpler data wrangling
+library(patchwork) # arranging and assembling figures
+library(ggdag) # visualizing directed acyclic graphs
+library(kableExtra) # visualizing tables in Rmd files
+
+library(brms) # training of Bayesian regression models
+library(marginaleffects) # evaluation of Bayesian regression models
+
+source("../util/data-loader.R") # preparation of the raw data
+```
+
+This notebook contains the analysis of the variance across demographic factors of responses to the question "How much do you agree or disagree with the following statements about your project?"
+The question requires rating the following statements:
+
+| Code | Name | Text |
+|---|---|---|
+| v_385 | Communication flaws within our project team. | Communication flaws within the project team |
+| v_386 | Communication flaws between the project and the customer. | Communication flaws between the project and the customer |
+| v_418 | Lack of communication between the project team and end users. | Lack of communication between project team and end users |
+| v_409 | Communication channels used in our project are ineffective. | Communication channels used in our project are ineffective |
+| v_410 | Changes in requirements are not communicated. | Changes in requirements not communicated |
+| v_388 | Incomplete or hidden requirements | Incomplete or hidden requirements |
+| v_389 | Insufficient support by our project lead. | Insufficient support by project lead |
+| v_392 | Inconsistent requirements | Inconsistent requirements |
+| v_393 | Requirements are not traceable. | Requirements are not traceable |
+| v_394 | Targets are moving | Targets are moving (changing goals, business processes and / or requirements) |
+| v_395 | Gold plating | Gold plating (implementation of features without corresponding requirements) |
+| v_396 | Weak access to customer needs | Weak access to customer needs and / or (internal) business information |
+| v_397 | Weak knowledge about customer's application domain | Weak knowledge about customer's application domain |
+| v_399 | We do not have enough time to carry out tasks. | We do not have enough time to carry out tasks |
+| v_401 | Technically unfeasible requirements | Technically unfeasible requirements |
+| v_402 | Underspecified requirements that are too abstract | Underspecified requirements that are too abstract and allow for various interpretations |
+| v_403 | Unclear or unmeasurable non-functional requirements | Unclear or unmeasurable non-functional requirements |
+| v_404 | Lack of trust between our project team members | Lack of trust between our project team members |
+| v_411 | Lack of trust between our project team members and stakeholder | Lack of trust between our project team members and stakeholder or customer |
+| v_405 | An important stakeholder is not represented in our project | An important stakeholder is not represented in our project |
+| v_408 | Our team's responsibilities are unclear | Our team's responsibilities are unclear |
+| v_407 | Problems with terminology | Problems with terminology |
+| v_406 | Language barriers | Language barriers |
+| v_387 | Lack of commitment to shared project goals | Lack of commitment to shared goals within project |
+| v_417 | No standard format for documenting requirements | No use of standard format for documenting requirements |
+| v_459 | Our requirements engineers lack enthusiasm or commitment | Our requirements engineers lack enthusiasm or commitment to do requirements analysis |
+| v_571 | Internal or external constraints are not considered | Internal or external constraints are not considered |
+
+All questions were answered on the following ordinal scale: Strongly disagree, Disagree, No opinion, Agree, Strongly agree
+
+```{r configuration}
+# short name of the question
+q = "perceived problems"
+# list of variables representing the statements for the question
+v <- c("v_385", "v_386", "v_418", "v_409", "v_410", "v_388", "v_389", "v_392", "v_393", 
+       "v_394", "v_395", "v_396", "v_397", "v_399", "v_401", "v_402", "v_403", "v_404", 
+       "v_411", "v_405", "v_408", "v_407", "v_406", "v_387", "v_417", "v_459", "v_571")
+# names of the variables
+labels <- c(
+  "Communication flaws within our project team.",
+  "Communication flaws between the project and the customer.",
+  "Lack of communication between the project team and end users.",
+  "Communication channels used in our project are ineffective.",
+  "Changes in requirements are not communicated.",
+  "Incomplete or hidden requirements",
+  "Insufficient support by our project lead.",
+  "Inconsistent requirements",
+  "Requirements are not traceable.",
+  "Targets are moving",
+  "Gold plating",
+  "Weak access to customer needs",
+  "Weak knowledge about customer's application domain",
+  "We do not have enough time to carry out tasks.",
+  "Technically unfeasible requirements",
+  "Underspecified requirements that are too abstract",
+  "Unclear or unmeasurable non-functional requirements",
+  "Lack of trust between our project team members",
+  "Lack of trust between our project team members and stakeholder",
+  "An important stakeholder is not represented in our project",
+  "Our team's responsibilities are unclear",
+  "Problems with terminology",
+  "Language barriers",
+  "Lack of commitment to shared project goals",
+  "No standard format for documenting requirements",
+  "Our requirements engineers lack enthusiasm or commitment",
+  "Internal or external constraints are not considered"
+)
+# names of the options
+options <- c("Strongly disagree", "Disagree", "No opinion", "Agree", "Strongly Agree")
+
+# minimum likelihood of responses to be considered "common"
+level.common <- 0.2
+```
+
+## Variables
+
+We consider the following demographic factors:
+
+| Code | Name | Question | Type |
+|---|---|---|---|
+| `v_23` | country | In which country are you personally located? | categorical |
+| `v_3` | size | How many people are involved in your project? | numeric |
+| `v_457` | way of working | How would you personally characterise the way your project works? | ordinal |
+| `v_1` | sector | Please select the main industrial sector of your project or the application domain of the software you build. | categorical |
+| `v_16` | external | Does your project involve external partners? | binary |
+| `v_357` | distributed | Is your project distributed? | binary |
+| `v_377` | virtualization | Do you tend to work from home, on-site, or both? | ordinal |
+| `v_17` | role | What is the main role you occupy in your project? | categorical |
+
+## Data Analysis
+
+We analyze the variance of the response variable following established practices of Bayesian data analysis.[^2]
+
+```{r load-data}
+d <- load_data_2024(data_path = "../../data", file = "data_preprocessed.csv") %>% 
+  select(
+    "lfdn", # respondent identifier
+    "v_3", "Country", "v_1", "v_457", "v_16", "v_357", "v_377", "v_17", # demographic factors
+    all_of(v) # response variables
+    ) %>% 
+  drop_na()
+
+str(d)
+```
+
+For each outcome variable, we train one Bayesian regression model on all demographic variables as predictors.
+
+### Modelling
+
+First, we define a formula regressing the outcome variable of interest on the demographic factors
+
+```{r define-formula}
+f <- 
+  eval(parse(text = paste0("bf(mvbind(", 
+                           paste(v, collapse = ", "),
+                           ") ~ 1 + v_3 + Country + v_1 + v_457 + v_16 + v_357 + v_377 + v_17)",
+                           "+ set_rescor(FALSE)")))
+
+# get_prior(f, data = d, family = cumulative("probit"))
+```
+
+For each coefficient implied by a predictor, we specify a prior based on domain knowledge.
+
+```{r set-priors}
+p <- c(
+  set_prior("normal(0, 1)", class = "Intercept", resp = gsub("_", "", v)), 
+  set_prior("normal(0, 0.2)", class = "b", resp = gsub("_", "", v))
+)
+```
+
+Since the response variables are all on the same ordinal scale, we model them using a multivariate cumulative distrubition utilizing a probit link to the parameter space of $p$.
+
+```{r prior-predictive-check}
+m.prior <-
+  brm(data = d, family = cumulative("probit"), formula = f, prior = p,
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 4, sample_prior="only",
+    file = paste0("../fits/variance.", v[1], ".prior"), file_refit = "on_change"
+  )
+
+brms::pp_check(m.prior, ndraws=100, type = "bars", resp = gsub("_", "", v[1]))
+```
+
+The prior predictive check (for one of the response variable options) confirms the plausibility of the selected prior probability distribution.
+Given the number of predictors, the weight towards the extreme values is anticipated.
+Next, we update the coefficient distributions in light of the collected data using Monte Carlo Markov Chain sampling.
+
+```{r model-training}
+m <-
+  brm(data = d, family = cumulative("probit"), formula = f, prior = p,
+    iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 4, init = 0,
+    file = paste0("../fits/variance.", v[1]), file_refit = "on_change"
+  )
+
+brms::pp_check(m, ndraws=100, type="bars", resp = gsub("_", "", v[1]))
+```
+
+The posterior predictive check (for one of the response variable options) shows that the model predictions ($y_{rep}$) have grown closer to the actually observed data (`y`).
+This confirms that the model has trained well.
+
+### Evaluation
+
+We visualize the marginal effect of each demographic factor on every response option to determine, (1) whether an option can be viewed as "common", and (2) whether the levels of the demographic factor affect the responses to this question.
+
+```{r function-tabulate}
+tabulate_common <- function(ceff, var, options) {
+  # create a table containing a mapping of the statements to the response options where the CI is common
+  result <- ceff %>% 
+    filter(lower__ > level.common) %>% # keep results where the lower bound of the CI is above the "common" level
+    select(effect1__, effect2__, response) %>% 
+    group_by(response, effect2__) %>% 
+    filter(n_distinct(effect1__) == nrow(unique(select(d, var)))) %>% # keep only response x option combinations where all levels of the demographic factor are present (and, therefore, common)
+    distinct(response, effect2__) %>% 
+    ungroup() %>% 
+    rename(all_of(c(Statement = "response", Option = "effect2__"))) %>% 
+    mutate(present = TRUE) %>% 
+    complete(
+      Statement,
+      Option = cat.likert,
+      fill = list(present = FALSE)
+    ) %>% 
+    mutate(Option = factor(Option, levels = cat.likert, ordered = TRUE) ) %>% 
+    pivot_wider(names_from = Option, values_from = present, values_fill = FALSE) %>% 
+    select(Statement, all_of(cat.likert))
+  
+  # Pre-compute which rows have at least one TRUE
+  option_cols <- 2:(length(options)+1)
+  has_any_true <- rowSums(result[, option_cols]) > 0
+  
+  tbl <- result |> kbl(align = "c")
+  
+  for (col_idx in option_cols) {
+    tbl <- tbl |>
+      column_spec(
+        col_idx,
+        background = case_when(
+          !has_any_true          ~ "#d9d9d9",  # grey for all-FALSE rows
+          result[[col_idx]]      ~ "#c6efce",  # green for TRUE cells
+          .default               = "#ffc7ce"   # red for FALSE cells in active rows
+        ),
+        color = case_when(
+          !has_any_true          ~ "#666666",  # muted text for grey rows
+          result[[col_idx]]      ~ "#276221",  # dark green text
+          .default               = "#9c0006"   # dark red text
+        )
+      )
+  }
+  
+  tbl |> kable_styling(bootstrap_options = c("hover", "condensed"),
+                       full_width = FALSE)
+}
+```
+
+#### Sector
+
+First, we investigate the effect of the sector (`v_1`) on all response options.
+The following table lists all options where the credibility interval was consistently above the level determined to indicate a "common" response.
+
+```{r marginal-v1}
+ceff.v1 <- conditional_effects(m, "v_1", categorical = TRUE, prob = 0.95) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>%
+  mutate(
+    response = factor(response, levels = gsub("_", "", v),
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  )
+
+tabulate_common(ceff.v1, "v_1", cat.likert)
+```
+
+The following plot visualizes the marginal effect of the demographic factor on the response options per statement.
+
+```{r marginal-plot-v1, fig.width=12, fig.height=42, unit="cm"}
+ggplot(ceff.v1, aes(y = effect1__, color = effect2__)) +
+  geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+  geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+  geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+  facet_wrap(~response) +
+  scale_x_continuous(labels = scales::percent) +
+  labs(x = "Likelihood of selecting the option", y = "Sector", color = "Options") +
+  ggtitle(paste0("Sector affecting ", q)) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+#### Project Size
+
+Next, we investigate the effect of the the project size (`v_3`) on all response options.
+
+```{r marginal-v3}
+ceff.v3 <- conditional_effects(m, "v_3", categorical = TRUE, prob = 0.95) %>%
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>%
+  mutate(
+    response = factor(response, levels = gsub("_", "", v),
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  )
+```
+
+The following plot visualizes the marginal effect of the demographic factor on the response options per statement.
+
+```{r marginal-plot-v3, fig.width=12, fig.height=17, unit="cm"}
+ggplot(ceff.v3, aes(x = effect1__)) +
+    geom_line(aes(y = estimate__, color = effect2__)) +
+    geom_ribbon(aes(ymin = lower__, ymax = upper__, fill = effect2__), alpha = 0.2) +
+    geom_hline(yintercept = level.common, color = "grey", linetype = "dashed") +
+    facet_wrap(~response) +
+    labs(x = "Project size", y = "Likelihood of selecting the option",
+         color = "Options" , fill = "Options") +
+    scale_y_continuous(labels = scales::percent) +
+    ggtitle(paste0("Project size affecting ", q)) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+The following table lists all options where the credibility interval was consistently above the level determined to indicate a "common" response.
+
+```{r common-v3}
+ceff.v3 %>% 
+  filter(lower__ > level.common) %>% 
+  select(effect1__, effect2__, response) %>% 
+  group_by(response, effect2__) %>% 
+  filter(
+    n_distinct(effect1__) == 100
+  ) %>% 
+  distinct(response, effect2__) %>% 
+  ungroup() %>% 
+  rename(all_of(c(Statement = "response", Option = "effect2__")))
+```
+
+#### Country
+
+Next, we investigate the effect of the the country (`Country`) on all response options.
+The following table lists all options where the credibility interval was consistently above the level determined to indicate a "common" response.
+
+```{r marginal-country}
+ceff.country <- conditional_effects(m, "Country", categorical = TRUE, prob = 0.95) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>% 
+  mutate(
+    response = factor(response, levels = gsub("_", "", v), 
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  )
+
+tabulate_common(ceff.country, "Country", cat.likert)
+```
+
+The following plot visualizes the marginal effect of the demographic factor on the response options per statement.
+
+```{r marginal-plot-country, fig.width=12, fig.height=60, unit="cm"}
+ggplot(ceff.country, aes(y = effect1__, color = effect2__)) +
+  geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+  geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+  geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+  facet_wrap(~response) + 
+  scale_x_continuous(labels = scales::percent) +
+  labs(x = "Likelihood of selecting the option", y = "Country", color = "Options") + 
+  ggtitle(paste0("Country affecting ", q)) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+#### Way-of-Working
+
+Next, we investigate the effect of the way-of-working (`v_457`) on all response options.
+The following table lists all options where the credibility interval was consistently above the level determined to indicate a "common" response.
+
+```{r marginal-v457}
+ceff.v457 <- conditional_effects(m, "v_457", categorical = TRUE, prob = 0.95) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>% 
+  mutate(
+    response = factor(response, levels = gsub("_", "", v), 
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  )
+
+tabulate_common(ceff.v457, "v_457", cat.likert)
+```
+
+The following plot visualizes the marginal effect of the demographic factor on the response options per statement.
+
+```{r marginal-plot-v457, fig.width=12, fig.height=17, unit="cm"}
+ggplot(ceff.v457, aes(y = effect1__, color = effect2__)) +
+  geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+  geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+  geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+  facet_wrap(~response) + 
+  scale_x_continuous(labels = scales::percent) +
+  labs(x = "Likelihood of selecting the option", y = "Way-of-working", color = "Options") + 
+  ggtitle(paste0("Way-of-working affecting ", q)) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+#### External Partners
+
+Next, we investigate the effect of whether or not the project includes external partners (`v_16`) on all response options.
+The following table lists all options where the credibility interval was consistently above the level determined to indicate a "common" response.
+
+```{r marginal-v16}
+ceff.v16 <- conditional_effects(m, "v_16", categorical = TRUE, prob = 0.95) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>% 
+  mutate(
+    response = factor(response, levels = gsub("_", "", v), 
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  )
+
+tabulate_common(ceff.v16, "v_16", cat.likert)
+```
+
+The following plot visualizes the marginal effect of the demographic factor on the response options per statement.
+
+```{r marginal-plot-v16, fig.width=12, fig.height=14, unit="cm"}  
+ggplot(ceff.v16, aes(y = effect1__, color = effect2__)) +
+  geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+  geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+  geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+  facet_wrap(~response) + 
+  scale_x_continuous(labels = scales::percent) +
+  labs(x = "Likelihood of selecting the option", y = "External partners", color = "Options") + 
+  ggtitle(paste0("External partners affecting ", q)) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+#### Distributed
+
+Next, we investigate the effect of whether or not the project is distributed (`v_357`) on all response options.
+The following table lists all options where the credibility interval was consistently above the level determined to indicate a "common" response.
+
+```{r marginal-v357}
+ceff.v357 <- conditional_effects(m, "v_357", categorical = TRUE, prob = 0.95) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>% 
+  mutate(
+    response = factor(response, levels = gsub("_", "", v), 
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  )
+
+tabulate_common(ceff.v357, "v_357", cat.likert)
+```
+
+The following plot visualizes the marginal effect of the demographic factor on the response options per statement.
+
+```{r marginal-plot-v357, fig.width=12, fig.height=11, unit="cm"}
+ggplot(ceff.v357, aes(y = effect1__, color = effect2__)) +
+  geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+  geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+  geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+  facet_wrap(~response) + 
+  scale_x_continuous(labels = scales::percent) +
+  labs(x = "Likelihood of selecting the option", y = "Distributed project", color = "Options") + 
+  ggtitle(paste0("Distributed project affecting ", q)) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+#### Degree of Virtualization
+
+Next, we investigate the effect of the degree of virtualization (`v_377`) on all response options.
+The following table lists all options where the credibility interval was consistently above the level determined to indicate a "common" response.
+
+```{r marginal-v377}
+ceff.v377 <- conditional_effects(m, "v_377", categorical = TRUE, prob = 0.95) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>% 
+  mutate(
+    response = factor(response, levels = gsub("_", "", v), 
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  ) 
+
+tabulate_common(ceff.v377, "v_377", cat.likert)
+```
+
+The following plot visualizes the marginal effect of the demographic factor on the response options per statement.
+
+```{r marginal-plot-v377, fig.width=12, fig.height=17, unit="cm"}
+ggplot(ceff.v377, aes(y = effect1__, color = effect2__)) +
+  geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+  geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+  geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+  facet_wrap(~response) + 
+  scale_x_continuous(labels = scales::percent) +
+  labs(x = "Likelihood of selecting the option", y = "Degree of virtualization", color = "Options") + 
+  ggtitle(paste0("Degree of virtualization affecting ", q)) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+#### Main Role
+
+Next, we investigate the effect of the main role of the participant (`v_17`) on all response options.
+The following table lists all options where the credibility interval was consistently above the level determined to indicate a "common" response.
+
+```{r marginal-v17}
+ceff.v17 <- conditional_effects(m, "v_17", categorical = TRUE, prob = 0.95) %>% 
+  purrr::imap_dfr( ~ {
+    purrr::map_dfr(.x, identity) %>%
+      mutate(response = str_extract(.y, "^[^.]+"))
+  }) %>% 
+  mutate(
+    response = factor(response, levels = gsub("_", "", v), 
+                      labels = labels, ordered = TRUE),
+    effect2__ = factor(effect2__, levels = options, ordered = TRUE)
+  )
+
+tabulate_common(ceff.v17, "v_17", cat.likert)
+```
+
+The following plot visualizes the marginal effect of the demographic factor on the response options per statement.
+
+```{r marginal-plot-v17, fig.width=12, fig.height=34, unit="cm"}
+ggplot(ceff.v17, aes(y = effect1__, color = effect2__)) +
+  geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+  geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+  geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+  facet_wrap(~response) + 
+  scale_x_continuous(labels = scales::percent) +
+  labs(x = "Likelihood of selecting the option", y = "Main role in the project", color = "Options") + 
+  ggtitle(paste0("Main role affecting ", q)) +
+  theme_bw() +
+  theme(legend.position = "bottom")
+```
+
+[^2]: McElreath, R. (2018). Statistical rethinking: A Bayesian course with examples in R and Stan. Chapman and Hall/CRC.

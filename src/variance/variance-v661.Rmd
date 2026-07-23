@@ -1,0 +1,419 @@
+---
+title: "Variance of Top Problems"
+author: "Julian Frattini"
+date: "2026-04-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse) # R dialect for simpler data wrangling
+library(patchwork) # arranging and assembling figures
+library(ggdag) # visualizing directed acyclic graphs
+
+library(brms) # training of Bayesian regression models
+library(marginaleffects) # evaluation of Bayesian regression models
+
+source("../util/data-loader.R") # preparation of the raw data
+```
+
+This document analyses the variance of responses to the question "Considering your personally experienced problems stated in the previous question, which ones would you classify as the five most critical ones?" across demographic factors.
+Participants selected their top 5 (recorded in `v_661`, `v_662`, `v_663`, `v_664`, `v_665`) among the following problems:
+
+| Option | Original Text in the Survey |
+|---|---|
+| Communication flaws within our project team. | Communication flaws within the project team |
+| Communication flaws between the project and the customer. | Communication flaws between the project and the customer |
+| Lack of communication between the project team and end users. | Lack of communication between project team and end users |
+| Communication channels used in our project are ineffective. | Communication channels used in our project are ineffective |
+| Changes in requirements are not communicated. | Changes in requirements not communicated |
+| Incomplete or hidden requirements | Incomplete or hidden requirements |
+| Insufficient support by our project lead. | Insufficient support by project lead |
+| Inconsistent requirements | Inconsistent requirements |
+| Requirements are not traceable. | Requirements are not traceable |
+| Targets are moving | Targets are moving (changing goals, business processes and / or requirements) |
+| Gold plating | Gold plating (implementation of features without corresponding requirements) |
+| Weak access to customer needs | Weak access to customer needs and / or (internal) business information |
+| Weak knowledge about customer's application domain | Weak knowledge about customer's application domain |
+| We do not have enough time to carry out tasks. | We do not have enough time to carry out tasks |
+| Technically unfeasible requirements | Technically unfeasible requirements |
+| Underspecified requirements that are too abstract | Underspecified requirements that are too abstract and allow for various interpretations |
+| Unclear or unmeasurable non-functional requirements | Unclear or unmeasurable non-functional requirements |
+| Lack of trust between our project team members | Lack of trust between our project team members |
+| Lack of trust between our project team members and stakeholder | Lack of trust between our project team members and stakeholder or customer |
+| An important stakeholder is not represented in our project | An important stakeholder is not represented in our project |
+| Our team's responsibilities are unclear | Our team's responsibilities are unclear |
+| Problems with terminology | Problems with terminology |
+| Language barriers | Language barriers |
+| Lack of commitment to shared project goals | Lack of commitment to shared goals within project |
+| No standard format for documenting requirements | No use of standard format for documenting requirements |
+| Our requirements engineers lack enthusiasm or commitment | Our requirements engineers lack enthusiasm or commitment to do requirements analysis |
+| Internal or external constraints are not considered | Internal or external constraints are not considered |
+
+We analyze the variance of the response variable following established practices of Bayesian data analysis.[^1]
+
+```{r configuration}
+# minimum likelihood of responses to be considered "common"
+level.common <- 0.2
+```
+
+## Variables
+
+We consider the following demographic factors:
+
+| Code | Name | Question | Type |
+|---|---|---|---|
+| `v_23` | country | In which country are you personally located? | categorical |
+| `v_3` | size | How many people are involved in your project? | numeric |
+| `v_457` | way of working | How would you personally characterise the way your project works? | ordinal |
+| `v_1` | sector | Please select the main industrial sector of your project or the application domain of the software you build. | categorical |
+| `v_16` | external | Does your project involve external partners? | binary |
+| `v_357` | distributed | Is your project distributed? | binary |
+| `v_377` | virtualization | Do you tend to work from home, on-site, or both? | ordinal |
+| `v_17` | role | What is the main role you occupy in your project? | categorical |
+
+## Data Preparation
+
+First, we prepare the data. 
+The data set contains 245 complete responses to the ranking questions, i.e., 245 participants ranked their 5 top problems.
+
+```{r load-data}
+d.raw <- load_data_2024(data_path = "../../data", file = "data_preprocessed.csv") %>% 
+  select(
+    "lfdn", # respondent identifier
+    "v_3", "Country", "v_1", "v_457", "v_16", "v_357", "v_377", "v_17", # demographic factors
+    "v_661", "v_662", "v_663", "v_664", "v_665" # response variables
+    ) %>% 
+  drop_na()
+
+#str(d.raw)
+```
+
+The top 5 ranking implies that the other $22 = 27-5$ problems were not considered among the top five problems.
+To actively represent that data, we extrapolate the rankings, i.e., create a table with one row per combination of participant (identified by their `lfdn` ID) and problem, mapping them to a rank.
+The rank value is either between 1 and 5 (if the respective problem in a row landed in the top 5) or 0 (if the respective problem did not land in the top 5).
+
+```{r extrapolate-ranking}
+problems <- unique(d.raw$v_661)
+
+d.ranking <- d.raw %>%
+  select(lfdn, v_661, v_662, v_663, v_664, v_665) %>% 
+  # pivot the data frame from one row per participant to one row per participant per rank
+  pivot_longer(
+    cols = c(v_661, v_662, v_663, v_664, v_665),
+    names_to = "column",
+    values_to = "problem"
+  ) %>%
+  # turn the values of the rank column from the variable names to the ordered rank values
+  mutate(rank = 
+    case_when(
+      column == "v_661" ~ 1,
+      column == "v_662" ~ 2,
+      column == "v_663" ~ 3,
+      column == "v_664" ~ 4,
+      column == "v_665" ~ 5,
+      .default = 0
+    )
+  ) %>%
+  # fill in the remaining rows, i.e., the remaining 22 problems that the participants did not consider top 5
+  complete(lfdn, problem = problems, fill = list(rank = 0)) %>% 
+  mutate(rank = factor(rank, levels = c(0, 5:1), ordered = TRUE)) %>% 
+  select(lfdn, problem, rank)
+```
+
+Finally, we merge the participant data with the extrapolated ranking for a complete data set.
+
+```{r merge-data}
+d <- d.raw %>% 
+  left_join(d.ranking, by = "lfdn")
+
+str(d)
+```
+
+## Data Analysis
+
+The outcome variable, the `rank`, emerges from two separate behaviors:
+
+1. A **hurdle** (rank 0): Participants needed to consider a problem sufficiently critical to add it to their top 5. Sufficient criticality acts as the hurdle.
+2. A **ranking** (ranks 1-5): Once a problem passed the hurdle, it is ranked on an ordinal, 5-point scale.
+
+Consequently, we analyse this data using a `brms::hurdle_cumulative` model with a `probit` link function.
+
+### Generic Model
+
+Firstly, we focus on the ranking of the problems in general.
+
+#### Modelling
+
+First, we define a formula regressing the outcome variable of interest on the demographic factors
+
+```{r define-formula}
+f <- bf(
+  rank ~ 1 + problem + v_3 + Country + v_1 + v_457 + v_16 + v_357 + v_377 + v_17,
+  hu ~ 1 + problem# + v_3 + Country + v_1 + v_457 + v_16 + v_357 + v_377 + v_17
+)
+
+#get_prior(f, data = d, family = hurdle_cumulative("probit"))
+```
+
+For each coefficient implied by a predictor, we specify a prior based on domain knowledge.
+The priors with the parameter `dpar = "hu"` pertain to the linear model of the hurdle parameter.
+
+```{r set-priors}
+p <- c(
+  set_prior("normal(0, 1)", class = "Intercept"), 
+  set_prior("normal(0, 0.2)", class = "b"),
+  
+  set_prior("normal(0, 1)", class = "Intercept", dpar = "hu"),
+  set_prior("normal(0, 0.2)", class = "b", dpar = "hu")
+)
+```
+
+Since the response variable is an ordinal rank (1-5) with a hurdle (0), we model it as a `brms::hurdle_cumulative` distribution using a probit link function.
+
+```{r prior-predictive-check}
+m.prior <-
+  brm(data = d, family = hurdle_cumulative("probit"), formula = f, prior = p,
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 4, sample_prior="only",
+    file = "../fits/variance.v_661.prior", file_refit = "on_change"
+  )
+
+brms::pp_check(m.prior, ndraws=100, type = "bars")
+```
+
+The prior predictive check (for one of the response variable options) confirms the plausibility of the selected prior probability distribution.
+Given the number of predictors, the weight towards the extreme values is anticipated.
+Next, we update the coefficient distributions in light of the collected data using Monte Carlo Markov Chain sampling.
+
+```{r model-training}
+m <-
+  brm(data = d, family = hurdle_cumulative("probit"), formula = f, prior = p,
+    iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 4, init = 0,
+    file = "../fits/variance.v_661", file_refit = "on_change"
+  )
+
+brms::pp_check(m, ndraws=100, type="bars")
+```
+
+The posterior predictive check (for one of the response variable options) shows that the model predictions ($y_{rep}$) have grown closer to the actually observed data (`y`).
+This confirms that the model has trained well.
+
+### Evaluation
+
+We visualize the marginal effect of each demographic factor on every response option to determine, (1) whether an option can be viewed as "common", and (2) whether the levels of the demographic factor affect the responses to this question.
+
+#### Main Factor
+
+The main factor of interest affecting the ranking are the actual problems.
+We generate two marginal effects for this.
+The first visualization shows the linkelihood of *not* ranking a problem among the top 5.
+The lower this probability, the more likely the problem is considered a critical problem.
+
+```{r marginal-problems-hurdle, fig.width=8, fig.height=8, unit="cm"}
+conditional_effects(m, "problem", categorical = TRUE, prob = 0.95)[[1]] %>% 
+  filter(as.numeric(as.character(effect2__)) == 0) %>% 
+  mutate(effect2__ = factor(effect2__, levels = c(0, 5:1), ordered = TRUE)) %>% 
+  ggplot(aes(y = effect1__)) + 
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+    labs(x = "Likelihood of not ranking the problem among the top 5", y = "Problem") +
+    scale_x_continuous(labels = scales::percent) +
+    theme_bw()
+```
+
+The second figure visualizes the likelihood of assigning a certain rank to the problem. 
+The absolute values represent the absolute likelihood.
+The relative values (i.e., the likelihood of the five ranks per problem) also indicate severity:
+More serious problems have a higher likelihood of getting ranked top 1 than the other ranks.
+
+```{r marginal-problems-top, fig.width=8, fig.height=12, unit="cm"}
+conditional_effects(m, "problem", categorical = TRUE, prob = 0.95)[[1]] %>% 
+  filter(as.numeric(as.character(effect2__)) > 0) %>% 
+  mutate(effect2__ = factor(effect2__, levels = c(0, 5:1), ordered = TRUE)) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) + 
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+    labs(x = "Likelihood of ranking the problem", y = "Problem", color = "Rank") +
+    scale_x_continuous(labels = scales::percent) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+### Models for Demographic Effects
+
+To study the impact of demographic factors on the problem ranking, we require a complex interaction effect model.
+As of right now, the model just considers the effect of demographic factors on each *ranking in general*, not each *problem-specific rank*.
+Because we do not assume any interaction between the demographic factors, we can study each of these effects individually.
+
+For this, we define two helper functions.
+The first, `model.demographic`, creates a dedicated regression model containing an interaction effect between the problem and the demographic factor.
+
+```{r model-demographic-moderation}
+model.demographic <- function(var) {
+  # specify a formula relating both the rank and the hurdle to an interaction 
+  # effect between the problem and the variable
+  f <- eval(parse(text = paste0("bf(rank ~ 1 + problem*", var,
+                                ", hu ~ 1 + problem*", var, ")")))
+  
+  # train the Bayesian regression model
+  m <-
+    brm(data = d, family = hurdle_cumulative("probit"), formula = f, prior = p,
+      iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 4, init = 0,
+      file = paste0("../fits/variance.v_661.", var), file_refit = "on_change"
+    )
+  
+  return(m)
+}
+```
+
+The second (set of) helper function(s) visualizes the results of the regression model with the interaction effect.
+It produces two figures again: one visualizing the effect on the hurdle (i.e., how the demographic factor moderates the effect of the problem on the likelihood of not ranking the problem among the top 5) and the effect on the ranking (i.e., how the demographic factor moderates the effect of the problem on the likelihood of ranking the problem among the top 5).
+
+```{r visualize-conditional-effects}
+visualize.facets <- function(ceff, var, title, name) {
+  ceff %>% 
+    ggplot(aes(y = !!sym(var), color = effect2__)) +
+      geom_point(aes(x = estimate__), position = position_dodge(width = 0.4)) +
+      geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.4)) +
+      facet_wrap(~effect1__, ncol = 4) +
+      labs(x = "Likelihood of ranking the problem", y = name, color = "Rank") +
+      ggtitle(title) +
+      scale_x_continuous(labels = scales::percent) +
+      theme_bw() +
+      theme(legend.position = "bottom")
+}
+
+visualize.moderation <- function(model, var, name) {
+  # compute the conditional effect between the variable and problem on the rank
+  cond <- make_conditions(model, vars = var)
+  ceff <- conditional_effects(model, effects = "problem", conditions = cond,
+                    categorical = TRUE, prob = 0.95)[[1]] %>% 
+    mutate(effect2__ = factor(effect2__, levels = c(0, 5:1), ordered = TRUE))
+  
+  # visualize the hurdle-effect (rank = 0)
+  c.hurdle <- visualize.facets(
+    filter(ceff, as.numeric(as.character(effect2__)) == 0), var,
+    paste0(name, " moderating whether Problems are considered Top-5"), name)
+  
+  # visualize the ranking-effect (rank = {1,5})
+  c.rank <- visualize.facets(
+    filter(ceff, as.numeric(as.character(effect2__)) > 0), var,
+    paste0(name, " moderating the Top-5 Ranking of Problems"), name)
+  
+  return(c(c.hurdle, c.rank))
+}
+```
+
+#### Influence of Country
+
+The following figures show how the demographic variable *country* (`Country`) moderates the ranking of problems.
+
+```{r conditional-country, fig.width=14, fig.height=32, unit="cm"}
+m.country <- model.demographic("Country") 
+#brms::pp_check(m.country, ndraws=100, type="bars")
+visualize.moderation(model = m.country, var = "Country", name = "Country")
+```
+
+#### Influence of Size
+
+The following figures show how the demographic variable project size (`v_3`) moderates the ranking of problems.
+
+```{r conditional-v3, fig.width=14, fig.height=26, unit="cm"}
+m.country <- model.demographic("v_3") 
+#brms::pp_check(m.country, ndraws=100, type="bars")
+cond <- #make_conditions(m.country, vars = "v_3")
+cond <- data.frame(v_3 = seq(from = 0, to = 400, by = 25))
+ceff <- conditional_effects(m.country, effects = "problem", conditions = cond,
+                    categorical = TRUE, prob = 0.95)[[1]] %>% 
+    mutate(effect2__ = factor(effect2__, levels = c(0, 5:1), ordered = TRUE))
+
+# visualize the hurdle-effect (rank = 0)
+ceff %>% 
+  filter(as.numeric(as.character(effect2__)) == 0) %>% 
+  ggplot(aes(x = v_3)) +
+    geom_line(aes(y = estimate__, color = effect2__)) +
+    geom_ribbon(aes(ymin = lower__, ymax = upper__, fill = effect2__), alpha = 0.2) +
+    facet_wrap(~effect1__, ncol = 4) +
+      labs(y = "Likelihood of ranking the problem", x = "Project Size", color = "Rank", fill = "Rank") +
+      ggtitle("Project Size moderating whether Problems are considered Top-5") +
+      scale_y_continuous(labels = scales::percent) +
+      theme_bw() +
+      theme(legend.position = "bottom")
+
+# visualize the ranking-effect (rank = [1, 5])
+ceff %>% 
+  filter(as.numeric(as.character(effect2__)) > 0) %>% 
+  ggplot(aes(x = v_3)) +
+    geom_line(aes(y = estimate__, color = effect2__)) +
+    geom_ribbon(aes(ymin = lower__, ymax = upper__, fill = effect2__), alpha = 0.2) +
+    facet_wrap(~effect1__, ncol = 4) +
+      labs(y = "Likelihood of ranking the problem", y = "Project Size", color = "Rank", fill = "Rank") +
+      ggtitle("Project Size moderating the Top-5 Ranking of Problems") +
+      scale_y_continuous(labels = scales::percent) +
+      theme_bw() +
+      theme(legend.position = "bottom")
+```
+
+#### Influence of Way-of-Working
+
+The following figures show how the demographic variable *way-of-working* (`v_457`) moderates the ranking of problems.
+
+```{r conditional-v457, fig.width=14, fig.height=16, unit="cm"}
+m.v457 <- model.demographic("v_457") 
+#brms::pp_check(m.v457, ndraws=100, type="bars")
+visualize.moderation(model = m.v457, var = "v_457", name = "Way-of-Working")
+```
+
+#### Influence of Industrial Sector
+
+The following figures show how the demographic variable *industrial sector* (`v_1`) moderates the ranking of problems.
+
+```{r conditional-v1, fig.width=14, fig.height=28, unit="cm"}
+m.v1 <- model.demographic("v_1") 
+#brms::pp_check(m.v1, ndraws=100, type="bars")
+visualize.moderation(model = m.v1, var = "v_1", name = "Industrial Sector")
+```
+
+#### Influence of External Partners
+
+The following figures show how the demographic variable *external partners* (`v_16`) moderates the ranking of problems.
+
+```{r conditional-v16, fig.width=14, fig.height=14, unit="cm"}
+m.v16 <- model.demographic("v_16") 
+#brms::pp_check(m.v16, ndraws=100, type="bars")
+visualize.moderation(model = m.v16, var = "v_16", name = "External Partners")
+```
+
+#### Influence of Distributed Project
+
+The following figures show how the demographic variable *distributed project* (`v_357`) moderates the ranking of problems.
+
+```{r conditional-v357, fig.width=14, fig.height=14, unit="cm"}
+m.v357 <- model.demographic("v_357") 
+#brms::pp_check(m.v357, ndraws=100, type="bars")
+visualize.moderation(model = m.v357, var = "v_357", name = "Distributed Project")
+```
+
+#### Influence of Degree of Virtualization
+
+The following figures show how the demographic variable *degree of virtualization* (`v_377`) moderates the ranking of problems.
+
+```{r conditional-v377, fig.width=14, fig.height=20, unit="cm"}
+m.v377 <- model.demographic("v_377") 
+#brms::pp_check(m.v377, ndraws=100, type="bars")
+visualize.moderation(model = m.v377, var = "v_377", name = "Degree of Virtualization")
+```
+
+#### Influence of Main Role
+
+The following figures show how the demographic variable *main role* (`v_17`) moderates the ranking of problems.
+
+```{r conditional-v17, fig.width=14, fig.height=18, unit="cm"}
+m.v17 <- model.demographic("v_17") 
+#brms::pp_check(m.v17, ndraws=100, type="bars")
+visualize.moderation(model = m.v17, var = "v_17", name = "Main Role")
+```
+
+[^1]: McElreath, R. (2018). Statistical rethinking: A Bayesian course with examples in R and Stan. Chapman and Hall/CRC.

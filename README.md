@@ -13,10 +13,13 @@ This repository contains the following files:
 
 ```
 ├── data: data collected during the 2024 NaPiRE run
-│   ├── Codebook.pdf: explanation of variables and values
+│   ├── codebook.pdf: explanation of variables and values
 │   ├── data_raw.csv: raw data from the run
+│   ├── propositions.md: propositions from the 2018 status quo theory
 │   └── quick-overview.zip: simple visualization of the collected data
 ├── figures: directory for all generated figures
+│   ├── descriptive: directory of all descriptive statistics
+│   └── variance: figures used to illustrate the analysis of variance
 ├── organisation: supplementary files for the coordination of the study
 │   ├── NaPiRE Flyer: promotional material for participating in NaPiRE
 │   ├── NaPiRE-Survey.pdf: list of questions asked in the NaPiRE questionnaire

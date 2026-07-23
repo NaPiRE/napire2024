@@ -1,0 +1,254 @@
+---
+title: "Variance of User Feedback Frequency"
+author: "Julian Frattini"
+date: "2026-04-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse) # R dialect for simpler data wrangling
+library(patchwork) # arranging and assembling figures
+library(ggdag) # visualizing directed acyclic graphs
+
+library(brms) # training of Bayesian regression models
+library(marginaleffects) # evaluation of Bayesian regression models
+
+source("../util/data-loader.R") # preparation of the raw data
+```
+
+This document analyses the variance of responses to the question "How often is end user feedback provided?" (`v_368`) across demographic factors.
+For analysis, we follow the 3-step framework for statistical causal inference as summarized by Siebert.[^1]
+
+```{r configuration}
+v <- "v_368"
+vname <- "user feedback frequency"
+
+# minimum likelihood of responses to be considered "common"
+level.common <- 0.2
+```
+
+## Variables
+
+We consider the following demographic factors:
+
+| Code | Name | Question | Type |
+|---|---|---|---|
+| `v_23` | country | In which country are you personally located? | categorical |
+| `v_3` | size | How many people are involved in your project? | numeric |
+| `v_457` | way of working | How would you personally characterise the way your project works? | ordinal |
+| `v_1` | sector | Please select the main industrial sector of your project or the application domain of the software you build. | categorical |
+| `v_16` | external | Does your project involve external partners? | binary |
+| `v_357` | distributed | Is your project distributed? | binary |
+| `v_377` | virtualization | Do you tend to work from home, on-site, or both? | ordinal |
+| `v_17` | role | What is the main role you occupy in your project? | categorical |
+
+## Data Analysis
+
+We analyze the variance of the response variable following established practices of Bayesian data analysis.[^2]
+
+```{r load-data}
+d <- load_data_2024(data_path = "../../data", file = "data_preprocessed.csv") %>% 
+  select(lfdn, v_3, Country, v_1, v_457, v_16, v_357, v_377, v_17, !!sym(v)) %>% 
+  drop_na()
+
+str(d)
+```
+
+For each outcome variable, we train one Bayesian regression model on all demographic variables as predictors.
+
+### Modelling
+
+First, we define a formula regressing the outcome variable of interest on the demographic factors
+
+```{r define-formula}
+f <- bf(v_368 ~ 1 + v_3 + Country + v_1 + v_457 + v_16 + v_357 + v_377 + v_17)
+
+# get_prior(f, data = d, family = cumulative("probit"))
+```
+
+For each coefficient implied by a predictor, we specify a prior based on domain knowledge.
+
+```{r set-priors}
+p <- c(
+  set_prior("normal(0, 1)", class = "Intercept"), 
+  set_prior("normal(0, 0.2)", class = "b")
+)
+```
+
+Since the response variable follows an ordinal distribution with an underlying, latent continuous variable, we model it using a cumulative distribution utilizing a probit link.
+
+```{r prior-predictive-check}
+m.prior <-
+  brm(data = d, family = cumulative("probit"), formula = f, prior = p,
+    iter = 2000, warmup = 1000, chains = 4, cores = 4,
+    seed = 4, sample_prior="only",
+    file = paste0("../fits/variance.", v, ".prior"), file_refit = "on_change"
+  )
+
+brms::pp_check(m.prior, ndraws=100, type = "bars")
+```
+
+The prior predictive check confirms the plausibility of the selected prior probability distribution.
+Given the number of predictors, the weight towards the extreme values is anticipated.
+Next, we update the coefficient distributions in light of the collected data using Monte Carlo Markov Chain sampling.
+
+```{r model-training}
+m <-
+  brm(data = d, family = cumulative("probit"), formula = f, prior = p,
+    iter = 2000, warmup = 1000, chains = 4, cores = 4, seed = 42, 
+    file = paste0("../fits/variance.", v), file_refit = "on_change"
+  )
+
+brms::pp_check(m, ndraws=100, type="bars")
+```
+
+The posterior predictive check shows that the model predictions ($y_{rep}$) have grown closer to the actually observed data (`y`).
+This confirms that the model has trained well.
+
+#### Evaluation
+
+First, we can evaluate the model by visualizing the raw posterior distributions.
+Most of the posteriors are consistent with 0, i.e., have no significant effect on the distribution of the outcome variable.
+
+```{r visualize-posteriors}
+posterior.distributions <- posterior_summary(m) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("term") %>%
+  filter(grepl("^b_", term) & !grepl("^b_Intercept", term)) %>%
+  mutate(abs_est = abs(Estimate)) %>%
+  arrange(desc(abs_est))
+
+mcmc_plot(m, variable = posterior.distributions$term, 
+          type = "intervals", prob = 0.5, prob_outer = 0.95)
+```
+
+Next, we visualize marginal effects of individual predictors.
+The sector (`v_1`) hardly shows any effect on the outcome.
+
+```{r marginal-v1, fig.width=8, fig.height=8, unit="cm"}
+conditional_effects(m, "v_1", categorical = TRUE, prob = 0.95)[[1]] %>% 
+  mutate(effect2__ = factor(effect2__, ordered = TRUE)) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.8)) + 
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.8)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "Sector", color = "Options") +
+    ggtitle(paste0("Sector affecting ", vname)) +
+    theme_bw()
+```
+
+The company size (`v_3`) shows some effect at the extreme ends of the spectrum.
+At around 50 people, the response "good" takes over the dominant spot of "very good".
+The likelihood of responding with "very good" continuously declines.
+
+```{r marginal-v3}
+conditional_effects(m, "v_3", categorical = TRUE, prob = 0.95)[[1]] %>% 
+  mutate(effect2__ = factor(effect2__, ordered = TRUE)) %>% 
+  ggplot(aes(x = effect1__)) + 
+    geom_line(aes(y = estimate__, color = effect2__)) +
+    geom_ribbon(aes(ymin = lower__, ymax = upper__, fill = effect2__), alpha = 0.2) +
+    geom_hline(yintercept = 0.2, color = "grey", linetype = "dashed") +
+    labs(x = "Company size", y = "Likelihood of selecting the option", 
+         color = "Response", fill = "Response") +
+    scale_y_continuous(labels = scales::percent) +
+    ggtitle(paste0("Project size affecting ", vname)) +
+    theme_bw()
+```
+
+There is hardly any variance in the response from different countries (`Country`).
+
+```{r marginal-country, fig.width=8, fig.height=8, unit="cm"}
+conditional_effects(m, "Country", categorical = TRUE, prob = 0.95)[[1]] %>% 
+  mutate(effect2__ = factor(effect2__, ordered = TRUE)) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.8)) + 
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.8)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "Country", color = "Response") +
+    ggtitle(paste0("Country affecting ", vname)) +
+    theme_bw()
+```
+
+The way-of-working (`v_457`) also shows little variance, though respondents from an "Agile" way-of-working have the highest likelihood of responding more positively.
+
+```{r marginal-v457}
+conditional_effects(m, "v_457", categorical = TRUE, prob = 0.95)[[1]] %>% 
+  mutate(effect2__ = factor(effect2__, ordered = TRUE)) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.8)) + 
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.8)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "Way-of-Working", color = "Response") +
+    ggtitle(paste0("Way-of-working affecting ", vname)) +
+    theme_bw()
+```
+
+Whether or not external partners are involved (`v_16`) makes no difference in response patterns.
+
+```{r marginal-v16}
+conditional_effects(m, "v_16", categorical = TRUE, prob = 0.95)[[1]] %>% 
+  mutate(effect2__ = factor(effect2__, ordered = TRUE)) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.8)) + 
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.8)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "External partners involved", color = "Response") +
+    ggtitle(paste0("External partners affecting ", vname)) +
+    theme_bw()
+```
+
+Whether or not the project is distributed (`v_357`) shows little effect on the responses.
+
+```{r marginal-v357}
+conditional_effects(m, "v_357", categorical = TRUE, prob = 0.95)[[1]] %>% 
+  mutate(effect2__ = factor(effect2__, ordered = TRUE)) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.8)) + 
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.8)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "Distributed project", color = "Response") +
+    ggtitle(paste0("Distributed project affecting ", vname)) +
+    theme_bw()
+```
+
+The degree of virtualization (`v_377`) shows only a small effect in that participants reporting the level "Approximately half on-site and half from home" and "Almost completely on-site" respond the least positively.
+
+```{r marginal-v_377, fig.width=8, fig.height=5, unit="cm"}
+conditional_effects(m, "v_377", categorical = TRUE, prob = 0.95)[[1]] %>% 
+  mutate(effect2__ = factor(effect2__, ordered = TRUE)) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.8)) + 
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.8)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "Degree of virtualization", color = "Response") +
+    ggtitle(paste0("Degree of virtualization affecting ", vname)) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+The role of respondents (`v_17`) does not show a significant effect.
+
+```{r marginal-v_17, fig.width=8, fig.height=8, unit="cm"}
+conditional_effects(m, "v_17", categorical = TRUE, prob = 0.95)[[1]] %>% 
+  mutate(effect2__ = factor(effect2__, ordered = TRUE)) %>% 
+  ggplot(aes(y = effect1__, color = effect2__)) +
+    geom_point(aes(x = estimate__), position = position_dodge(width = 0.8)) + 
+    geom_errorbar(aes(xmin = lower__, xmax = upper__), position = position_dodge(width = 0.8)) +
+    geom_vline(xintercept = level.common, color = "grey", linetype = "dashed") +
+    scale_x_continuous(labels = scales::percent) +
+    labs(x = "Likelihood of selecting the option", y = "Main role in the project", color = "Response") +
+    ggtitle(paste0("Main role affecting ", vname)) +
+    theme_bw() +
+    theme(legend.position = "bottom")
+```
+
+[^1]: Siebert, J. (2023). Applications of statistical causal inference in software engineering. Information and Software Technology, 159, 107198.
+[^2]: McElreath, R. (2018). Statistical rethinking: A Bayesian course with examples in R and Stan. Chapman and Hall/CRC.
