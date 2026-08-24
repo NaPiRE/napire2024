@@ -192,9 +192,9 @@ ggplot(completeness, aes(y = fct_reorder(group, n_max))) +
   labs(x = "Number of complete rows", y = "Question group") +
   theme_bw() +
   theme(legend.position = "bottom") +
-  scale_x_continuous(expand = expansion(mult = c(0.08, 0.08)))  # room for labels at both ends
+  scale_x_continuous(expand = expansion(mult = c(0.1, 0.1)))  # room for labels at both ends
 
 ggsave("../../figures/dropout-complete.pdf", device = "pdf",
-       width = 16, height = 5, unit = "cm")
+       width = 15, height = 8, unit = "cm")
 ```
 
