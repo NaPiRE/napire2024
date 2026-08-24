@@ -191,11 +191,15 @@ conditional_effects(m, "v_3", categorical = TRUE, prob = 0.95)[[1]] %>%
     geom_line(aes(y = estimate__, color = effect2__)) +
     geom_ribbon(aes(ymin = lower__, ymax = upper__, fill = effect2__), alpha = 0.2) +
     geom_hline(yintercept = 0.2, color = "grey", linetype = "dashed") +
-    labs(x = "Company size", y = "Likelihood of selecting the option", 
+    geom_vline(xintercept = 100, color = "black", linetype = "dotted") + 
+    labs(x = "Project size", y = "Likelihood of selecting the option", 
          color = "Response", fill = "Response") +
     scale_y_continuous(labels = scales::percent) +
     ggtitle(paste0("Project size affecting ", vname)) +
     theme_bw()
+
+ggsave("../../figures/variance/v359-marginal-size.pdf", device = "pdf", 
+       width = 8, height = 4.5, unit = "in")
 ```
 
 There is hardly any variance in the response from different countries (`Country`).

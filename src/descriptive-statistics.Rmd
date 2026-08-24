@@ -246,16 +246,21 @@ d %>%
                              "Customer relationship",
                              "Intra-team communication",
                              "Inter-team communication"
-                           ))) %>% 
+                           )),
+         #answer = fct_rev(answer),
+         textcolor = if_else(as.integer(answer) <= 3, "white", "black")
+         ) %>% 
   ggplot(aes(y = question, fill = answer)) +
     geom_bar(position = "stack", stat = "count") +
-    geom_text(aes(label = after_stat(count)), position = "stack", stat = "count", 
-              hjust = 1.2, colour = "white", size = 3) +
+    geom_text(aes(label = after_stat(count), color = textcolor, group = answer), 
+              position = "stack", stat = "count", 
+              hjust = 1.2, size = 3) +
     labs(x = "Number of responses", fill = "Options") +
     theme_bw() +
     theme(legend.position = "right", axis.title.y = element_blank()) +
     #ggtitle(paste0("Rating Communication (n=", nrow(drop_na(select(d, v_28))), ")"))
     guides(fill = guide_legend(reverse = TRUE)) +
+    scale_color_identity() +
     scale_y_discrete(limits = rev)
 
 ggsave("../figures/descriptive/communication.pdf", device = "pdf",
