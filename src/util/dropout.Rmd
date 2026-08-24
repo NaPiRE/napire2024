@@ -47,13 +47,24 @@ vars.top <- c("v_661", "v_662", "v_663", "v_664", "v_665")
 vars <- c(vars.meta, vars.communication, vars.elicitation, vars.assumption, vars.benefit, 
           vars.documentation, vars.nfrs, vars.reasons, vars.validation, vars.problems,
           vars.top)
+
+var_groups <- list(
+  "Demographics" = vars.meta,
+  "Communication" = vars.communication,
+  "Requirements Elicitation" = vars.elicitation,
+  "Assumptions" = vars.assumption,
+  "Unknown Benefit" = vars.benefit,
+  "Documentation" = vars.documentation,
+  "Non-functional Requirements"  = vars.nfrs,
+  "Analysis" = vars.reasons,
+  "Validation" = vars.validation
+)
 ```
 
 Then, we load the data and retain only the relevant variables.
 
 ```{r load_data}
-d <- load_data(run = "2024", data_path = "../../data", 
-               file = "runs/napire2024/data_cleaned_2024.csv") %>% 
+d <- load_data_2024(data_path = "../../data", file = "data_preprocessed.csv") %>% 
   select(all_of(vars))
 
 n <- nrow(d)
@@ -118,25 +129,72 @@ d %>%
                 names_to = "column",
                 values_to = "missing") %>% 
   mutate(available = n - missing) %>% 
-  pivot_longer(cols = c("missing", "available"), names_to = "status", values_to = "count") %>% 
   mutate(
     column = factor(column, levels = rev(c("v_3", "v_25", "v_28", "v_455", "v_482", 
                                        "v_76", "v_97", "v_559", "v_158")), 
                     labels = rev(c("Demographics", "Communication", "Requirements Elicitation", 
                                "Assumptions", "Unknown Benefit", "Documentation", 
                                "Non-functional Requirements", "Analysis", 
-                               "Validation")), ordered = TRUE),
-    status = factor(status, levels = c("missing", "available"), ordered = FALSE)
+                               "Validation")), ordered = TRUE)
     ) %>% 
-   ggplot(aes(x = count, y = column, fill = status)) +
+   ggplot(aes(x = available, y = column)) + 
     geom_bar(stat = "identity", position = "stack") +
-    geom_text(aes(label = count), position = "stack", stat = "identity",
-              hjust = 1.2, colour = "white", size = 3) +
-    labs(x = "Number of Responses", y = "Question Group", fill = "Status") +
+    geom_text(aes(label = available), hjust = -0.15, size = 3.2) +
+    labs(
+      x = "Number of Responses", 
+      y = "Question Group", 
+      title = "Complete first entries per group") +
     theme_bw() +
     theme(legend.position = "right")
 
-ggsave("../figures/dropout.pdf", device = "pdf",
+ggsave("../../figures/dropout-page.pdf", device = "pdf",
+       width = 16, height = 5, unit = "cm")
+```
+
+However, the survey tool recorded even incomplete pages.
+To accurately understand the dropout pattern, we first need to determine the number of complete responses per question group.
+
+```{r calculate-completeness}
+completeness <- map_dfr(names(var_groups), function(g) {
+  vars_g <- var_groups[[g]]
+  d_sub <- d %>% select(any_of(vars_g))
+
+  tibble(
+    group      = g,
+    n_min      = sum(complete.cases(d_sub)),                 # all vars in group non-NA
+    n_max      = d_sub %>%
+      summarise(across(everything(), ~ sum(!is.na(.)))) %>%
+      as.numeric() %>%
+      max()                                                   # best single variable
+  )
+})
+```
+
+The following figure contrasts these two values, showing the range between 
+
+- the minimum number of available data points per question group (i.e., the number of complete rows given the subset of questions), and
+- the maximum number of available data points for one single question within that group.
+
+```{r visualize-complete}
+ggplot(completeness, aes(y = fct_reorder(group, n_max))) +
+  geom_segment(aes(x = n_min, xend = n_max, yend = group), color = "grey70", linewidth = 1) +
+  geom_point(aes(x = n_min, color = "All questions answered"), size = 3) +
+  geom_point(aes(x = n_max, color = "Best single question"), size = 3) +
+  geom_text(aes(x = n_min, label = n_min), hjust = 1.4, size = 3.2, color = "steelblue") +
+  geom_text(aes(x = n_max, label = n_max), hjust = -0.4, size = 3.2, color = "firebrick") +
+  scale_color_manual(
+    name = NULL,
+    values = c(
+      "All questions answered" = "steelblue",
+      "Best single question"   = "firebrick"
+    )
+  ) +
+  labs(x = "Number of complete rows", y = "Question group") +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  scale_x_continuous(expand = expansion(mult = c(0.08, 0.08)))  # room for labels at both ends
+
+ggsave("../../figures/dropout-complete.pdf", device = "pdf",
        width = 16, height = 5, unit = "cm")
 ```
 
