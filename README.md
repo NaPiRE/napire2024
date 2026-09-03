@@ -33,10 +33,15 @@ This repository contains the following files:
 │   │   ├── dropout.Rmd: notebook visualizing the dropout patterns from the survey
 │   │   └── data-loader.R: script to load, cast, and prepare the raw data for the analysis
 │   ├── variance: analyses of variance of the response variables
+│   │   ├── napire24-variance-overview.xlsx: map between all questions and demographic dimensions listing, which options achieve a 95% credible interval above the 20% threshold
+│   │   └── variance-vXXX.R: script determining the variance that each demographic factor exerts on question XXX
 │   └── descriptive-statistics.Rmd: visualization of quantitative data from the 2024 data set
 ├── INSTALL.md : system requirements for this artifact
 └── LICENSE.md : license file clarifying reuse of this material
 ```
+
+Throughout this repository, questions are identified by an alphanumeric code in the form of `v_XXX` (or `vXXX` in the R code).
+The mapping between questions and codes stems from the [codebook](data/codebook.pdf), where each question is associated with a *variable name*.
 
 > [!important]
 > For the longitudinal analysis involving the data from this run, refer to https://github.com/NaPiRE/napire-longitudinal.
@@ -54,13 +59,13 @@ The following subsections detail how to utilize the material compiled in this re
 
 ### Analysis of Variance
 
-The folder *src/variance* contains all notebooks analyzing, how the responses to the main survey questions vary by the demographic factors. 
+The folder *src/variance* contains all notebooks analyzing how the responses to the main survey questions vary by the demographic factors. 
 This has two purposes:
 
 1. Via the use of Bayesian data analysis, these analyses produce **credibility intervals**, i.e., intervals of likelihood responding to a question with a specific response. Responses with intervals consistently above 20% likelihood can be considered *common*.
 2. Via marginal effects of the individual demographic factors, these analyses reveal effects of individual variables.
 
-To process these analyses, first consult the overview file [napire-24-variance.xlsx](src/variance/napire-24-variance-ci89+95.xlsx) consisting of the following columns:
+To process these analyses, first consult the overview file [napire24-variance.xlsx](src/variance/napire24-variance.xlsx) consisting of the following columns:
 
 - Code: the identifier of the variable in the NaPiRE data set
 - Question: the raw question text to which respondents answered

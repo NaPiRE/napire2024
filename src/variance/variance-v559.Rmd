@@ -264,14 +264,19 @@ ggplot(ceff.v3, aes(x = effect1__)) +
 ```
 
 The following table lists all options where the credibility interval was consistently above the level determined to indicate a "common" response.
+When focusing on the range [1; 100] (instead of [1; 400]), we are only interested in the first 25 levels of the size factor (since the marginal effect, by default, samples 100 levels from the maximum range of the variable).
 
 ```{r common-v3}
 ceff.v3 %>% 
+  filter(v_3 <= 100) %>% 
   filter(lower__ > level.common) %>% 
   select(effect1__, effect2__, response) %>% 
   group_by(response, effect2__) %>% 
-  filter(
-    n_distinct(effect1__) == 100
+  filter( 
+    # find all response x effect2__ pairs where all 25 levels of effect1__ 
+    # (i.e., the project size) are above the level.common threshold,
+    # i.e., have not been filtered out
+    n_distinct(effect1__) == 25
   ) %>% 
   distinct(response, effect2__) %>% 
   ungroup() %>% 
