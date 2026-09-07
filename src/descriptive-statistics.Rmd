@@ -20,6 +20,15 @@ This notebook contains the visualization of descriptive statistics of the NaPiRE
 These statistics serve to provide an overview of the status quo of requirements engineering in 2024.
 As such, they update the status quo previously published by Wagner et al.[^1]
 
+```{r util}
+get_mode <- function(x) {
+  ux <- unique(x)
+  tab <- tabulate(match(x, ux))
+  modes <- ux[tab == max(tab)]
+  paste(sort(modes), collapse = ", ")
+}
+```
+
 ## Data Loading
 
 First, we load the data set with all its variables and retain only relevant columns.
@@ -64,6 +73,46 @@ d <- load_data_2024(data_path = "../data", file = "data_preprocessed.csv") %>%
 ```
 
 ## Data Visualization
+
+The following sections visualize the distribution of responses per question.
+For multiple choice questions, the distributions of number of responses is additionally interesting.
+The following helper function
+
+```{r function-response-distribution}
+get_resp_distribution <- function(vars) {
+  d.responses <- d %>% 
+    select(all_of(vars)) %>% 
+    drop_na() %>% 
+    rowwise() %>% 
+    mutate(count = sum(c_across(all_of(vars)))) %>% 
+    ungroup() %>% 
+    select(count)
+  
+  p <- ggplot(d.responses, aes(count)) +
+    geom_bar(stat = "count") +
+    geom_text(aes(label = after_stat(count)), stat = "count",
+              vjust = -0.8, colour = "black", size = 3) +
+    labs(x = "Number of selected options", y = "Frequency") +
+    scale_x_continuous(breaks = seq(0, max(d.responses$count))) +
+    theme_bw()
+  
+  print(p)
+  
+  d.responses %>% 
+    summarize(
+      median = median(count),
+      mode   = get_mode(count),
+      iqr    = IQR(count),
+      q1     = quantile(count, 0.25),
+      q3     = quantile(count, 0.75),
+      mad    = mad(count, constant = 1),
+      mean   = mean(count),
+      sd     = sd(count)
+    ) %>% 
+    t()
+}
+```
+
 
 ### Meta-Data
 
@@ -368,6 +417,15 @@ ggsave("../figures/descriptive/elicitation-techniques.pdf", device = "pdf",
        width = 18, height = 9, unit = "cm")
 ```
 
+The following figure and table visualizes the response distribution per participant.
+It shows, how many options participants selected in this multiple-choice question.
+
+```{r v36-response-distribution}
+get_resp_distribution(c("v_36", "v_37", "v_38", "v_39", "v_40", "v_41", "v_42", 
+                        "v_43", "v_44", "v_47", "v_667", "v_668", "v_669", "v_461", 
+                        "v_454", "v_45"))
+```
+
 ### Assumptions
 
 Answers to the question "If you are in a situation where you lack information and have to make an assumption to proceed in your project, what do you typically do?"
@@ -464,6 +522,13 @@ ggsave("../figures/descriptive/document-information.pdf", device = "pdf",
        width = 10, height = 9, unit = "cm")
 ```
 
+```{r v76-response-distribution}
+get_resp_distribution(c("v_76", "v_73", "v_79", "v_68", "v_70", "v_71", "v_74",
+                        "v_78", "v_77", "v_75", "v_69", "v_72", "v_466", "v_557",
+                        "v_576", "v_80"))
+```
+
+
 Answers to the question "How do you document requirements?"
 
 ```{r viz-v87}
@@ -502,6 +567,13 @@ d %>%
 ggsave("../figures/descriptive/document-types.pdf", device = "pdf",
        width = 10, height = 9, unit = "cm")
 ```
+
+```{r v87-response-distribution}
+get_resp_distribution(c("v_87", "v_92", "v_88", "v_91", "v_83", "v_93", "v_89",
+                        "v_90", "v_84", "v_86", "v_82", "v_85", "v_463", "v_558", 
+                        "v_575", "v_95"))
+```
+
 
 Answers to the question "Have you ever failed to document one or more requirements?"
 
@@ -551,6 +623,10 @@ ggsave("../figures/descriptive/failure-reasons.pdf", device = "pdf",
        width = 14, height = 7, unit = "cm")
 ```
 
+```{r v670-response-distribution}
+get_resp_distribution(c("v_670", "v_671", "v_672", "v_673", "v_674", "v_675", "v_676", "v_677"))
+```
+
 ### Non-functional Requirements
 
 Answers to the question "Which classes of non-functional requirements do you explicitly consider in your requirements documentation?"
@@ -582,6 +658,11 @@ d %>%
 
 ggsave("../figures/descriptive/nfrs.pdf", device = "pdf",
        width = 14, height = 7, unit = "cm")
+```
+
+```{r v97-response-distribution}
+get_resp_distribution(c("v_97", "v_98", "v_99", "v_100", "v_101", "v_102", 
+                        "v_303", "v_103", "v_422", "v_104"))
 ```
 
 ### Stopping Requirements Analysis
@@ -665,6 +746,11 @@ d %>%
 
 ggsave("../figures/descriptive/testing.pdf", device = "pdf",
        width = 14, height = 5, unit = "cm")
+```
+
+```{r v158-response-distribution}
+get_resp_distribution(c("v_158", "v_159", "v_160", "v_161", "v_162", "v_573", 
+                        "v_574", "v_163"))
 ```
 
 ### Problems
